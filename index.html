@@ -51,22 +51,42 @@
       border-color: #60a5fa;
     }
 
-    /* メインキャンバス領域 */
+    /* メイン領域 */
     #board-container {
       flex: 1;
       position: relative;
       overflow: hidden;
       background: #cbd5e1;
     }
-    #background-img {
+
+    /* 移動・拡大縮小できる資料コンテナ */
+    #doc-wrapper {
       position: absolute;
-      top: 0;
-      left: 0;
-      max-width: 100%;
-      max-height: 100%;
-      pointer-events: none;
-      z-index: 1;
+      top: 40px;
+      left: 40px;
+      display: none;
+      z-index: 5;
+      cursor: grab;
+      border: 2px dashed rgba(71, 85, 105, 0.4);
+      background: white;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+      resize: both;
+      overflow: hidden;
+      min-width: 150px;
+      min-height: 150px;
+      max-width: 90%;
+      max-height: 90%;
     }
+    #doc-wrapper:active { cursor: grabbing; }
+    #doc-wrapper img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      pointer-events: none; /* ドラッグ操作を親コンテナで受ける */
+    }
+
+    /* ペン描画キャンバス */
     #drawing-canvas {
       position: absolute;
       top: 0;
@@ -118,13 +138,13 @@
     .sticky-note .del-btn:hover { color: #ef4444; }
 
     /* 付箋の5色 */
-    .color-pink  { background-color: #ffd1dc; }
-    .color-yellow{ background-color: #fff9b1; }
-    .color-blue  { background-color: #cce5ff; }
-    .color-green { background-color: #d4e09b; }
-    .color-white { background-color: #ffffff; }
+    .color-pink   { background-color: #ffd1dc; }
+    .color-yellow { background-color: #fff9b1; }
+    .color-blue   { background-color: #cce5ff; }
+    .color-green  { background-color: #d4e09b; }
+    .color-white  { background-color: #ffffff; }
 
-    /* 下部テキストマイニングまとめ領域 */
+    /* 下部テキストマイニング集計 */
     #mining-panel {
       height: 90px;
       background: #ffffff;
@@ -169,13 +189,14 @@
 
   <!-- 操作ツールバー -->
   <div id="toolbar">
-    <!-- 資料配置 -->
+    <!-- 資料貼り付け -->
     <div class="tool-group">
       <label>資料(画像):</label>
       <input type="file" id="fileInput" accept="image/*,.pdf">
+      <button onclick="resetDocPosition()" title="初期位置・サイズに戻す">位置リセット</button>
     </div>
 
-    <!-- 付箋作成 -->
+    <!-- 付箋追加 -->
     <div class="tool-group">
       <label>付箋追加:</label>
       <select id="noteColor">
@@ -188,7 +209,7 @@
       <button onclick="addStickyNote()">＋ 付箋を貼る</button>
     </div>
 
-    <!-- ペン描画 -->
+    <!-- ペン入力 -->
     <div class="tool-group">
       <label>ペン入力:</label>
       <button id="penToggle" onclick="togglePen()">ペン: OFF</button>
@@ -206,11 +227,15 @@
 
   <!-- ボード領域 -->
   <div id="board-container">
-    <img id="background-img" alt="">
+    <!-- 移動できる資料枠 -->
+    <div id="doc-wrapper">
+      <img id="background-img" alt="">
+    </div>
+    <!-- 描画キャンバス -->
     <canvas id="drawing-canvas"></canvas>
   </div>
 
-  <!-- テキストマイニング集計領域 -->
+  <!-- テキストマイニング集計 -->
   <div id="mining-panel">
     <h4>📊 みんなのコメント頻出キーワード（自動集計）</h4>
     <div id="word-tags">
@@ -219,25 +244,75 @@
   </div>
 
   <script>
-    // --- 1. 資料（画像）の読み込み ---
-    const fileInput = document.getElementById('fileInput');
+    const board = document.getElementById('board-container');
+    const docWrapper = document.getElementById('doc-wrapper');
     const backgroundImg = document.getElementById('background-img');
 
+    // --- 1. 資料の読み込みと配置 ---
+    const fileInput = document.getElementById('fileInput');
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (!file) return;
+
       const reader = new FileReader();
       reader.onload = (event) => {
         backgroundImg.src = event.target.result;
+        docWrapper.style.display = 'block';
+        // 初期の位置とサイズ
+        docWrapper.style.left = '40px';
+        docWrapper.style.top = '40px';
+        docWrapper.style.width = '420px';
+        docWrapper.style.height = 'auto';
       };
       reader.readAsDataURL(file);
     });
 
-    // --- 2. 付箋の追加とドラッグ移動 ---
-    const board = document.getElementById('board-container');
-    let noteIdCounter = 0;
+    // 資料の位置・サイズリセット
+    function resetDocPosition() {
+      if (docWrapper.style.display !== 'none') {
+        docWrapper.style.left = '40px';
+        docWrapper.style.top = '40px';
+        docWrapper.style.width = '420px';
+        docWrapper.style.height = 'auto';
+      }
+    }
 
-    function addStickyNote(colorClass, text = '', left = 50, top = 50) {
+    // 資料枠のドラッグ移動
+    makeElementDraggable(docWrapper);
+
+    // --- 汎用ドラッグ処理 ---
+    function makeElementDraggable(el) {
+      let isDragging = false;
+      let startX, startY, initialLeft, initialTop;
+
+      el.addEventListener('mousedown', (e) => {
+        // テキストエリア、ボタン、リサイズつまみ操作時は移動させない
+        if (e.target.tagName.toLowerCase() === 'textarea' || e.target.tagName.toLowerCase() === 'button') return;
+        
+        // 右下リサイズつまみ付近のクリック時はドラッグ移動をキャンセル
+        const rect = el.getBoundingClientRect();
+        if (e.clientX > rect.right - 16 && e.clientY > rect.bottom - 16) return;
+
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        initialLeft = el.offsetLeft;
+        initialTop = el.offsetTop;
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        el.style.left = `${initialLeft + (e.clientX - startX)}px`;
+        el.style.top = `${initialTop + (e.clientY - startY)}px`;
+      });
+
+      window.addEventListener('mouseup', () => {
+        isDragging = false;
+      });
+    }
+
+    // --- 2. 付箋の追加と移動 ---
+    function addStickyNote(colorClass, text = '', left = 500, top = 60) {
       const color = colorClass || 'color-' + document.getElementById('noteColor').value;
       const note = document.createElement('div');
       note.className = `sticky-note ${color}`;
@@ -251,46 +326,16 @@
 
       board.appendChild(note);
 
-      // テキスト入力の監視（マイニング集計）
       const textarea = note.querySelector('textarea');
       textarea.addEventListener('input', runTextMining);
 
-      // ドラッグ機能
-      makeDraggable(note);
+      makeElementDraggable(note);
       runTextMining();
     }
 
     function deleteNote(btn) {
       btn.parentElement.remove();
       runTextMining();
-    }
-
-    function makeDraggable(el) {
-      let isDragging = false;
-      let startX, startY, initialLeft, initialTop;
-
-      el.addEventListener('mousedown', (e) => {
-        if (e.target.tagName.toLowerCase() === 'textarea' || e.target.tagName.toLowerCase() === 'button') return;
-        isDragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        initialLeft = el.offsetLeft;
-        initialTop = el.offsetTop;
-        el.style.zIndex = 30;
-      });
-
-      window.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        el.style.left = `${initialLeft + (e.clientX - startX)}px`;
-        el.style.top = `${initialTop + (e.clientY - startY)}px`;
-      });
-
-      window.addEventListener('mouseup', () => {
-        if (isDragging) {
-          isDragging = false;
-          el.style.zIndex = 20;
-        }
-      });
     }
 
     // --- 3. ペン入力機能 ---
@@ -312,14 +357,14 @@
       if (penActive) {
         btn.textContent = 'ペン: ON';
         btn.classList.add('active');
-        canvas.style.pointerEvents = 'auto';
+        canvas.style.pointerEvents = 'auto'; // ペン描画を最優先
       } else {
         btn.textContent = 'ペン: OFF';
         btn.classList.remove('active');
-        canvas.style.pointerEvents = 'none';
+        canvas.style.pointerEvents = 'none'; // 付箋や資料の移動を可能にする
       }
     }
-    canvas.style.pointerEvents = 'none'; // 初期はOFF
+    canvas.style.pointerEvents = 'none';
 
     canvas.addEventListener('mousedown', (e) => {
       if (!penActive) return;
@@ -341,8 +386,7 @@
     window.addEventListener('mouseup', () => { isDrawing = false; });
     function clearCanvas() { ctx.clearRect(0, 0, canvas.width, canvas.height); }
 
-    // --- 4. 自動テキストマイニング（簡易形態素解析） ---
-    // 助詞・助動詞などの不要語を除外
+    // --- 4. 自動テキストマイニング ---
     const stopWords = new Set(['の','に','は','を','た','が','で','て','と','し','れ','さ','ある','いる','も','する','から','な','こと','として']);
 
     function runTextMining() {
@@ -350,7 +394,6 @@
       let combinedText = '';
       textareas.forEach(t => { combinedText += ' ' + t.value.trim(); });
 
-      // 日本語の単語分割（2文字以上の漢字・カタカナ・連続アルファベットを簡易抽出）
       const tokens = combinedText.match(/[\u4e00-\u9faf]{2,}|[\u30a1-\u30f6]{2,}|[A-Za-z]{3,}/g) || [];
       const wordCounts = {};
 
@@ -360,7 +403,6 @@
         }
       });
 
-      // 出現頻度順にソート（上位8件）
       const sorted = Object.entries(wordCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
       const container = document.getElementById('word-tags');
       container.innerHTML = '';

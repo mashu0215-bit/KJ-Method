@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>シンプル共有ホワイトボード</title>
+  <!-- 本格的な日本語形態素解析ライブラリ Kuromoji.js -->
+  <script src="https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/build/kuromoji.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -59,7 +61,7 @@
       background: #cbd5e1;
     }
 
-    /* 移動・ピン留めできる資料コンテナ */
+    /* 移動・ピン留めできる資料枠 */
     #doc-wrapper {
       position: absolute;
       top: 40px;
@@ -78,16 +80,13 @@
       max-height: 90%;
     }
     #doc-wrapper:active { cursor: grabbing; }
-
-    /* ピン留め固定時のスタイル */
     #doc-wrapper.pinned {
       cursor: default;
       border: 2px solid transparent;
       box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-      resize: none; /* リサイズ無効化 */
+      resize: none;
     }
 
-    /* 資料上部のピン留め操作バー */
     .doc-pin-btn {
       position: absolute;
       top: 6px;
@@ -171,7 +170,7 @@
     }
     .sticky-note .del-btn:hover { color: #ef4444; }
 
-    /* 付箋の5色（黄緑を明るい薄緑に変更） */
+    /* 付箋の5色 */
     .color-pink   { background-color: #ffd1dc; }
     .color-yellow { background-color: #fff9b1; }
     .color-blue   { background-color: #cce5ff; }
@@ -193,6 +192,14 @@
       font-size: 13px;
       color: #475569;
       margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #mining-status {
+      font-size: 11px;
+      color: #94a3b8;
+      font-weight: normal;
     }
     #word-tags {
       display: flex;
@@ -261,18 +268,19 @@
 
   <!-- ボード領域 -->
   <div id="board-container">
-    <!-- 移動・ピン留めできる資料枠 -->
     <div id="doc-wrapper">
       <button class="doc-pin-btn" id="pinBtn" onclick="togglePinDoc(event)">📌 ピン留め</button>
       <img id="background-img" alt="">
     </div>
-    <!-- 描画キャンバス -->
     <canvas id="drawing-canvas"></canvas>
   </div>
 
   <!-- テキストマイニング集計 -->
   <div id="mining-panel">
-    <h4>📊 みんなのコメント頻出キーワード（自動集計）</h4>
+    <h4>
+      📊 みんなのコメント頻出キーワード（自動集計）
+      <span id="mining-status">（日本語解析エンジン準備中...）</span>
+    </h4>
     <div id="word-tags">
       <span style="color:#94a3b8; font-size:12px;">付箋に文字が入力されると、ここに頻出ワードが集計されます</span>
     </div>
@@ -307,7 +315,6 @@
       reader.readAsDataURL(file);
     });
 
-    // 資料のピン留め切り替え
     function togglePinDoc(e) {
       e.stopPropagation();
       isDocPinned = !isDocPinned;
@@ -331,10 +338,8 @@
       }
     }
 
-    // 資料枠のドラッグ移動（ピン留め中は動かない）
     makeElementDraggable(docWrapper, () => isDocPinned);
 
-    // --- 汎用ドラッグ処理 ---
     function makeElementDraggable(el, isLockedFn = () => false) {
       let isDragging = false;
       let startX, startY, initialLeft, initialTop;
@@ -343,7 +348,6 @@
         if (isLockedFn()) return;
         if (e.target.tagName.toLowerCase() === 'textarea' || e.target.tagName.toLowerCase() === 'button') return;
         
-        // 右下リサイズつまみ付近のクリック時はドラッグ移動をキャンセル
         const rect = el.getBoundingClientRect();
         if (e.clientX > rect.right - 18 && e.clientY > rect.bottom - 18) return;
 
@@ -440,12 +444,26 @@
     window.addEventListener('mouseup', () => { isDrawing = false; });
     function clearCanvas() { ctx.clearRect(0, 0, canvas.width, canvas.height); }
 
-    // --- 4. 自動テキストマイニング（1文字の漢字にも対応） ---
-    // 助詞・接続詞・記号など頻出の不要語リスト
+    // --- 4. 本格形態素解析（Kuromoji.js）によるテキストマイニング ---
+    let kuromojiTokenizer = null;
+    const statusEl = document.getElementById('mining-status');
+
+    // Kuromoji の辞書を読み込み
+    kuromoji.builder({ dicPath: "https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict" }).build((err, tokenizer) => {
+      if (err) {
+        console.error("Kuromoji初期化失敗:", err);
+        statusEl.textContent = "（簡易解析モード）";
+      } else {
+        kuromojiTokenizer = tokenizer;
+        statusEl.textContent = "（高精度解析ON）";
+        runTextMining(); // 辞書ロード後に再集計
+      }
+    });
+
+    // 除外する一般的な語句（ストップワード）
     const stopWords = new Set([
-      'の','に','は','を','た','が','で','て','と','し','れ','さ','ある','いる','も','する',
-      'から','な','こと','として','よう','これ','それ','あれ','この','その','あの','また',
-      'ので','ため','もの','など','より','でも','へ','や','ば','ます','です'
+      'こと','もの','よう','ため','そう','これ','それ','あれ','この','その','あの','どこ','だれ','なに',
+      'する','ある','いる','なる','できる','思う','いう','見る','いく','くる'
     ]);
 
     function runTextMining() {
@@ -453,15 +471,36 @@
       let combinedText = '';
       textareas.forEach(t => { combinedText += ' ' + t.value.trim(); });
 
-      // 1文字以上の漢字（針、糸、布など）、2文字以上のカタカナ、3文字以上のアルファベットを抽出
-      const tokens = combinedText.match(/[\u4e00-\u9faf]{1,}|[\u30a1-\u30f6]{2,}|[A-Za-z]{3,}/g) || [];
       const wordCounts = {};
 
-      tokens.forEach(w => {
-        if (!stopWords.has(w)) {
-          wordCounts[w] = (wordCounts[w] || 0) + 1;
-        }
-      });
+      if (kuromojiTokenizer) {
+        // Kuromojiによる品詞分析
+        const tokens = kuromojiTokenizer.tokenize(combinedText);
+
+        tokens.forEach(token => {
+          const pos = token.pos;          // 品詞（名詞、形容詞、動詞など）
+          const posDetail = token.pos_detail_1; // 品詞細分類
+          const basic = token.basic_form !== '*' ? token.basic_form : token.surface_form;
+
+          // 対象: 「一般名詞」「固有名詞」「サ変接続名詞」「形容詞（自立）」
+          // 非自立語・接尾辞・助詞・代名詞・数詞・記号などは除外
+          const isTargetNoun = (pos === '名詞' && (posDetail === '一般' || posDetail === '固有名詞' || posDetail === 'サ変接続'));
+          const isTargetAdj = (pos === '形容詞' && posDetail === '自立');
+
+          if (isTargetNoun || isTargetAdj) {
+            // 1文字のひらがな・記号や除外語をフィルタ
+            if (!stopWords.has(basic) && basic.length >= 1 && !/^[\u3040-\u309f]$/.test(basic)) {
+              wordCounts[basic] = (wordCounts[basic] || 0) + 1;
+            }
+          }
+        });
+      } else {
+        // 辞書ロード前やフォールバック時の処理
+        const tokens = combinedText.match(/[\u4e00-\u9faf]{1,}|[\u30a1-\u30f6]{2,}|[A-Za-z]{3,}/g) || [];
+        tokens.forEach(w => {
+          if (!stopWords.has(w)) wordCounts[w] = (wordCounts[w] || 0) + 1;
+        });
+      }
 
       // 出現頻度順にソート（上位8件）
       const sorted = Object.entries(wordCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
@@ -483,4 +522,3 @@
   </script>
 </body>
 </html>
- 

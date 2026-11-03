@@ -59,7 +59,7 @@
       background: #cbd5e1;
     }
 
-    /* 移動・拡大縮小できる資料コンテナ */
+    /* 移動・ピン留めできる資料コンテナ */
     #doc-wrapper {
       position: absolute;
       top: 40px;
@@ -78,12 +78,43 @@
       max-height: 90%;
     }
     #doc-wrapper:active { cursor: grabbing; }
+
+    /* ピン留め固定時のスタイル */
+    #doc-wrapper.pinned {
+      cursor: default;
+      border: 2px solid transparent;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      resize: none; /* リサイズ無効化 */
+    }
+
+    /* 資料上部のピン留め操作バー */
+    .doc-pin-btn {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      z-index: 20;
+      background: rgba(30, 41, 59, 0.85);
+      color: #fff;
+      border: none;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      opacity: 0.8;
+      transition: opacity 0.2s;
+    }
+    .doc-pin-btn:hover { opacity: 1; }
+    .doc-pin-btn.is-pinned {
+      background: #dc2626;
+      color: white;
+    }
+
     #doc-wrapper img {
       width: 100%;
       height: 100%;
       object-fit: contain;
       display: block;
-      pointer-events: none; /* ドラッグ操作を親コンテナで受ける */
+      pointer-events: none;
     }
 
     /* ペン描画キャンバス */
@@ -96,12 +127,14 @@
       z-index: 10;
     }
 
-    /* 付箋スタイル */
+    /* 付箋スタイル（横長デザイン） */
     .sticky-note {
       position: absolute;
-      width: 160px;
-      min-height: 140px;
-      padding: 10px;
+      width: 180px;
+      min-width: 120px;
+      height: 100px;
+      min-height: 60px;
+      padding: 8px 10px;
       border-radius: 8px;
       box-shadow: 2px 4px 8px rgba(0,0,0,0.15);
       z-index: 20;
@@ -132,16 +165,17 @@
       border: none;
       color: #94a3b8;
       cursor: pointer;
-      font-size: 12px;
-      padding: 0;
+      font-size: 13px;
+      padding: 0 0 2px 0;
+      line-height: 1;
     }
     .sticky-note .del-btn:hover { color: #ef4444; }
 
-    /* 付箋の5色 */
+    /* 付箋の5色（黄緑を明るい薄緑に変更） */
     .color-pink   { background-color: #ffd1dc; }
     .color-yellow { background-color: #fff9b1; }
     .color-blue   { background-color: #cce5ff; }
-    .color-green  { background-color: #d4e09b; }
+    .color-green  { background-color: #d9f99d; } /* 明るい薄い黄緑 */
     .color-white  { background-color: #ffffff; }
 
     /* 下部テキストマイニング集計 */
@@ -203,7 +237,7 @@
         <option value="pink">薄いピンク</option>
         <option value="yellow" selected>黄色</option>
         <option value="blue">水色</option>
-        <option value="green">モスグリーン</option>
+        <option value="green">薄い黄緑</option>
         <option value="white">白</option>
       </select>
       <button onclick="addStickyNote()">＋ 付箋を貼る</button>
@@ -227,8 +261,9 @@
 
   <!-- ボード領域 -->
   <div id="board-container">
-    <!-- 移動できる資料枠 -->
+    <!-- 移動・ピン留めできる資料枠 -->
     <div id="doc-wrapper">
+      <button class="doc-pin-btn" id="pinBtn" onclick="togglePinDoc(event)">📌 ピン留め</button>
       <img id="background-img" alt="">
     </div>
     <!-- 描画キャンバス -->
@@ -247,6 +282,8 @@
     const board = document.getElementById('board-container');
     const docWrapper = document.getElementById('doc-wrapper');
     const backgroundImg = document.getElementById('background-img');
+    const pinBtn = document.getElementById('pinBtn');
+    let isDocPinned = false;
 
     // --- 1. 資料の読み込みと配置 ---
     const fileInput = document.getElementById('fileInput');
@@ -258,16 +295,33 @@
       reader.onload = (event) => {
         backgroundImg.src = event.target.result;
         docWrapper.style.display = 'block';
-        // 初期の位置とサイズ
         docWrapper.style.left = '40px';
         docWrapper.style.top = '40px';
         docWrapper.style.width = '420px';
         docWrapper.style.height = 'auto';
+        isDocPinned = false;
+        docWrapper.classList.remove('pinned');
+        pinBtn.classList.remove('is-pinned');
+        pinBtn.textContent = '📌 ピン留め';
       };
       reader.readAsDataURL(file);
     });
 
-    // 資料の位置・サイズリセット
+    // 資料のピン留め切り替え
+    function togglePinDoc(e) {
+      e.stopPropagation();
+      isDocPinned = !isDocPinned;
+      if (isDocPinned) {
+        docWrapper.classList.add('pinned');
+        pinBtn.classList.add('is-pinned');
+        pinBtn.textContent = '🔒 ピン留め中';
+      } else {
+        docWrapper.classList.remove('pinned');
+        pinBtn.classList.remove('is-pinned');
+        pinBtn.textContent = '📌 ピン留め';
+      }
+    }
+
     function resetDocPosition() {
       if (docWrapper.style.display !== 'none') {
         docWrapper.style.left = '40px';
@@ -277,21 +331,21 @@
       }
     }
 
-    // 資料枠のドラッグ移動
-    makeElementDraggable(docWrapper);
+    // 資料枠のドラッグ移動（ピン留め中は動かない）
+    makeElementDraggable(docWrapper, () => isDocPinned);
 
     // --- 汎用ドラッグ処理 ---
-    function makeElementDraggable(el) {
+    function makeElementDraggable(el, isLockedFn = () => false) {
       let isDragging = false;
       let startX, startY, initialLeft, initialTop;
 
       el.addEventListener('mousedown', (e) => {
-        // テキストエリア、ボタン、リサイズつまみ操作時は移動させない
+        if (isLockedFn()) return;
         if (e.target.tagName.toLowerCase() === 'textarea' || e.target.tagName.toLowerCase() === 'button') return;
         
         // 右下リサイズつまみ付近のクリック時はドラッグ移動をキャンセル
         const rect = el.getBoundingClientRect();
-        if (e.clientX > rect.right - 16 && e.clientY > rect.bottom - 16) return;
+        if (e.clientX > rect.right - 18 && e.clientY > rect.bottom - 18) return;
 
         isDragging = true;
         startX = e.clientX;
@@ -357,11 +411,11 @@
       if (penActive) {
         btn.textContent = 'ペン: ON';
         btn.classList.add('active');
-        canvas.style.pointerEvents = 'auto'; // ペン描画を最優先
+        canvas.style.pointerEvents = 'auto';
       } else {
         btn.textContent = 'ペン: OFF';
         btn.classList.remove('active');
-        canvas.style.pointerEvents = 'none'; // 付箋や資料の移動を可能にする
+        canvas.style.pointerEvents = 'none';
       }
     }
     canvas.style.pointerEvents = 'none';
@@ -386,15 +440,21 @@
     window.addEventListener('mouseup', () => { isDrawing = false; });
     function clearCanvas() { ctx.clearRect(0, 0, canvas.width, canvas.height); }
 
-    // --- 4. 自動テキストマイニング ---
-    const stopWords = new Set(['の','に','は','を','た','が','で','て','と','し','れ','さ','ある','いる','も','する','から','な','こと','として']);
+    // --- 4. 自動テキストマイニング（1文字の漢字にも対応） ---
+    // 助詞・接続詞・記号など頻出の不要語リスト
+    const stopWords = new Set([
+      'の','に','は','を','た','が','で','て','と','し','れ','さ','ある','いる','も','する',
+      'から','な','こと','として','よう','これ','それ','あれ','この','その','あの','また',
+      'ので','ため','もの','など','より','でも','へ','や','ば','ます','です'
+    ]);
 
     function runTextMining() {
       const textareas = document.querySelectorAll('.sticky-note textarea');
       let combinedText = '';
       textareas.forEach(t => { combinedText += ' ' + t.value.trim(); });
 
-      const tokens = combinedText.match(/[\u4e00-\u9faf]{2,}|[\u30a1-\u30f6]{2,}|[A-Za-z]{3,}/g) || [];
+      // 1文字以上の漢字（針、糸、布など）、2文字以上のカタカナ、3文字以上のアルファベットを抽出
+      const tokens = combinedText.match(/[\u4e00-\u9faf]{1,}|[\u30a1-\u30f6]{2,}|[A-Za-z]{3,}/g) || [];
       const wordCounts = {};
 
       tokens.forEach(w => {
@@ -403,6 +463,7 @@
         }
       });
 
+      // 出現頻度順にソート（上位8件）
       const sorted = Object.entries(wordCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
       const container = document.getElementById('word-tags');
       container.innerHTML = '';
@@ -422,3 +483,4 @@
   </script>
 </body>
 </html>
+ 

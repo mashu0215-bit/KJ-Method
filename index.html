@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>シンプル共有ホワイトボード</title>
-  <!-- 本格的な日本語形態素解析ライブラリ Kuromoji.js -->
+  <!-- 日本語形態素解析ライブラリ -->
   <script src="https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/build/kuromoji.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -99,10 +99,7 @@
       border-radius: 4px;
       font-size: 12px;
       cursor: pointer;
-      opacity: 0.8;
-      transition: opacity 0.2s;
     }
-    .doc-pin-btn:hover { opacity: 1; }
     .doc-pin-btn.is-pinned {
       background: #dc2626;
       color: white;
@@ -165,12 +162,12 @@
       color: #94a3b8;
       cursor: pointer;
       font-size: 13px;
-      padding: 0 0 2px 0;
+      padding: 0;
       line-height: 1;
     }
     .sticky-note .del-btn:hover { color: #ef4444; }
 
-    /* 付箋の5色 */
+    /* 付箋カラー */
     .color-pink   { background-color: #ffd1dc; }
     .color-yellow { background-color: #fff9b1; }
     .color-blue   { background-color: #cce5ff; }
@@ -228,16 +225,14 @@
 </head>
 <body>
 
-  <!-- 操作ツールバー -->
+  <!-- ツールバー -->
   <div id="toolbar">
-    <!-- 資料貼り付け -->
     <div class="tool-group">
       <label>資料(画像):</label>
-      <input type="file" id="fileInput" accept="image/*,.pdf">
+      <input type="file" id="fileInput" accept="image/*">
       <button onclick="resetDocPosition()" title="初期位置・サイズに戻す">位置リセット</button>
     </div>
 
-    <!-- 付箋追加 -->
     <div class="tool-group">
       <label>付箋追加:</label>
       <select id="noteColor">
@@ -250,7 +245,6 @@
       <button onclick="addStickyNote()">＋ 付箋を貼る</button>
     </div>
 
-    <!-- ペン入力 -->
     <div class="tool-group">
       <label>ペン入力:</label>
       <button id="penToggle" onclick="togglePen()">ペン: OFF</button>
@@ -275,11 +269,11 @@
     <canvas id="drawing-canvas"></canvas>
   </div>
 
-  <!-- テキストマイニング集計 -->
+  <!-- 下部テキストマイニング -->
   <div id="mining-panel">
     <h4>
       📊 みんなのコメント頻出キーワード（自動集計）
-      <span id="mining-status">（日本語解析エンジン準備中...）</span>
+      <span id="mining-status">（日本語解析準備中...）</span>
     </h4>
     <div id="word-tags">
       <span style="color:#94a3b8; font-size:12px;">付箋に文字が入力されると、ここに頻出ワードが集計されます</span>
@@ -293,7 +287,7 @@
     const pinBtn = document.getElementById('pinBtn');
     let isDocPinned = false;
 
-    // --- 1. 資料の読み込みと配置 ---
+    // 1. 資料の読み込み
     const fileInput = document.getElementById('fileInput');
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
@@ -364,12 +358,10 @@
         el.style.top = `${initialTop + (e.clientY - startY)}px`;
       });
 
-      window.addEventListener('mouseup', () => {
-        isDragging = false;
-      });
+      window.addEventListener('mouseup', () => { isDragging = false; });
     }
 
-    // --- 2. 付箋の追加と移動 ---
+    // 2. 付箋の追加
     function addStickyNote(colorClass, text = '', left = 500, top = 60) {
       const color = colorClass || 'color-' + document.getElementById('noteColor').value;
       const note = document.createElement('div');
@@ -396,7 +388,7 @@
       runTextMining();
     }
 
-    // --- 3. ペン入力機能 ---
+    // 3. ペン機能
     const canvas = document.getElementById('drawing-canvas');
     const ctx = canvas.getContext('2d');
     let isDrawing = false;
@@ -444,26 +436,32 @@
     window.addEventListener('mouseup', () => { isDrawing = false; });
     function clearCanvas() { ctx.clearRect(0, 0, canvas.width, canvas.height); }
 
-    // --- 4. 本格形態素解析（Kuromoji.js）によるテキストマイニング ---
+    // 4. 日本語形態素解析・集計
     let kuromojiTokenizer = null;
     const statusEl = document.getElementById('mining-status');
 
-    // Kuromoji の辞書を読み込み
-    kuromoji.builder({ dicPath: "https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict" }).build((err, tokenizer) => {
-      if (err) {
-        console.error("Kuromoji初期化失敗:", err);
-        statusEl.textContent = "（簡易解析モード）";
+    try {
+      if (window.kuromoji) {
+        kuromoji.builder({ dicPath: "https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict" }).build((err, tokenizer) => {
+          if (err || !tokenizer) {
+            statusEl.textContent = "（標準集計モード）";
+          } else {
+            kuromojiTokenizer = tokenizer;
+            statusEl.textContent = "（高精度解析ON）";
+            runTextMining();
+          }
+        });
       } else {
-        kuromojiTokenizer = tokenizer;
-        statusEl.textContent = "（高精度解析ON）";
-        runTextMining(); // 辞書ロード後に再集計
+        statusEl.textContent = "（標準集計モード）";
       }
-    });
+    } catch (e) {
+      statusEl.textContent = "（標準集計モード）";
+    }
 
-    // 除外する一般的な語句（ストップワード）
     const stopWords = new Set([
       'こと','もの','よう','ため','そう','これ','それ','あれ','この','その','あの','どこ','だれ','なに',
-      'する','ある','いる','なる','できる','思う','いう','見る','いく','くる'
+      'する','ある','いる','なる','できる','思う','いう','見る','いく','くる','の','に','は','を','た',
+      'が','で','て','と','し','れ','さ','から','な','として','ます','です'
     ]);
 
     function runTextMining() {
@@ -474,35 +472,29 @@
       const wordCounts = {};
 
       if (kuromojiTokenizer) {
-        // Kuromojiによる品詞分析
-        const tokens = kuromojiTokenizer.tokenize(combinedText);
+        try {
+          const tokens = kuromojiTokenizer.tokenize(combinedText);
+          tokens.forEach(token => {
+            const pos = token.pos;
+            const posDetail = token.pos_detail_1;
+            const basic = token.basic_form !== '*' ? token.basic_form : token.surface_form;
 
-        tokens.forEach(token => {
-          const pos = token.pos;          // 品詞（名詞、形容詞、動詞など）
-          const posDetail = token.pos_detail_1; // 品詞細分類
-          const basic = token.basic_form !== '*' ? token.basic_form : token.surface_form;
+            const isTargetNoun = (pos === '名詞' && (posDetail === '一般' || posDetail === '固有名詞' || posDetail === 'サ変接続'));
+            const isTargetAdj = (pos === '形容詞' && posDetail === '自立');
 
-          // 対象: 「一般名詞」「固有名詞」「サ変接続名詞」「形容詞（自立）」
-          // 非自立語・接尾辞・助詞・代名詞・数詞・記号などは除外
-          const isTargetNoun = (pos === '名詞' && (posDetail === '一般' || posDetail === '固有名詞' || posDetail === 'サ変接続'));
-          const isTargetAdj = (pos === '形容詞' && posDetail === '自立');
-
-          if (isTargetNoun || isTargetAdj) {
-            // 1文字のひらがな・記号や除外語をフィルタ
-            if (!stopWords.has(basic) && basic.length >= 1 && !/^[\u3040-\u309f]$/.test(basic)) {
-              wordCounts[basic] = (wordCounts[basic] || 0) + 1;
+            if (isTargetNoun || isTargetAdj) {
+              if (!stopWords.has(basic) && basic.length >= 1 && !/^[\u3040-\u309f]$/.test(basic)) {
+                wordCounts[basic] = (wordCounts[basic] || 0) + 1;
+              }
             }
-          }
-        });
+          });
+        } catch(e) {
+          fallbackMining(combinedText, wordCounts);
+        }
       } else {
-        // 辞書ロード前やフォールバック時の処理
-        const tokens = combinedText.match(/[\u4e00-\u9faf]{1,}|[\u30a1-\u30f6]{2,}|[A-Za-z]{3,}/g) || [];
-        tokens.forEach(w => {
-          if (!stopWords.has(w)) wordCounts[w] = (wordCounts[w] || 0) + 1;
-        });
+        fallbackMining(combinedText, wordCounts);
       }
 
-      // 出現頻度順にソート（上位8件）
       const sorted = Object.entries(wordCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
       const container = document.getElementById('word-tags');
       container.innerHTML = '';
@@ -517,6 +509,14 @@
         badge.className = 'word-badge';
         badge.innerHTML = `${word} <span>${count}</span>`;
         container.appendChild(badge);
+      });
+    }
+
+    function fallbackMining(text, wordCounts) {
+      // 漢字1字以上（針、糸など）または2字以上のカタカナ・英字を抽出
+      const tokens = text.match(/[\u4e00-\u9faf]{1,}|[\u30a1-\u30f6]{2,}|[A-Za-z]{3,}/g) || [];
+      tokens.forEach(w => {
+        if (!stopWords.has(w)) wordCounts[w] = (wordCounts[w] || 0) + 1;
       });
     }
   </script>

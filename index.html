@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>シンプル共有ホワイトボード</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background: #e2e8f0;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* ツールバー */
+    #toolbar {
+      height: 54px;
+      background: #1e293b;
+      color: white;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 12px;
+      z-index: 100;
+      flex-shrink: 0;
+    }
+    .tool-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border-right: 1px solid #475569;
+      padding-right: 12px;
+    }
+    .tool-group:last-child { border-right: none; }
+    label { font-size: 13px; font-weight: bold; }
+    button, select, input[type="file"] {
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid #64748b;
+      background: #334155;
+      color: white;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    button.active {
+      background: #2563eb;
+      border-color: #60a5fa;
+    }
+
+    /* メインキャンバス領域 */
+    #board-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: #cbd5e1;
+    }
+    #background-img {
+      position: absolute;
+      top: 0;
+      left: 0;
+      max-width: 100%;
+      max-height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+    #drawing-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10;
+    }
+
+    /* 付箋スタイル */
+    .sticky-note {
+      position: absolute;
+      width: 160px;
+      min-height: 140px;
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 2px 4px 8px rgba(0,0,0,0.15);
+      z-index: 20;
+      cursor: grab;
+      display: flex;
+      flex-direction: column;
+      resize: both;
+      overflow: hidden;
+      font-family: inherit;
+    }
+    .sticky-note:active { cursor: grabbing; }
+    .sticky-note textarea {
+      flex: 1;
+      width: 100%;
+      border: none;
+      background: transparent;
+      resize: none;
+      outline: none;
+      font-family: inherit;
+      font-size: 14px;
+      line-height: 1.4;
+      color: #1e293b;
+      user-select: text;
+    }
+    .sticky-note .del-btn {
+      align-self: flex-end;
+      background: none;
+      border: none;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 12px;
+      padding: 0;
+    }
+    .sticky-note .del-btn:hover { color: #ef4444; }
+
+    /* 付箋の5色 */
+    .color-pink  { background-color: #ffd1dc; }
+    .color-yellow{ background-color: #fff9b1; }
+    .color-blue  { background-color: #cce5ff; }
+    .color-green { background-color: #d4e09b; }
+    .color-white { background-color: #ffffff; }
+
+    /* 下部テキストマイニングまとめ領域 */
+    #mining-panel {
+      height: 90px;
+      background: #ffffff;
+      border-top: 2px solid #cbd5e1;
+      padding: 8px 16px;
+      display: flex;
+      flex-direction: column;
+      z-index: 50;
+      flex-shrink: 0;
+    }
+    #mining-panel h4 {
+      font-size: 13px;
+      color: #475569;
+      margin-bottom: 6px;
+    }
+    #word-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      overflow-y: auto;
+    }
+    .word-badge {
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px solid #bfdbfe;
+      border-radius: 16px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+    .word-badge span {
+      background: #3b82f6;
+      color: white;
+      border-radius: 50%;
+      padding: 1px 6px;
+      margin-left: 4px;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 操作ツールバー -->
+  <div id="toolbar">
+    <!-- 資料配置 -->
+    <div class="tool-group">
+      <label>資料(画像):</label>
+      <input type="file" id="fileInput" accept="image/*,.pdf">
+    </div>
+
+    <!-- 付箋作成 -->
+    <div class="tool-group">
+      <label>付箋追加:</label>
+      <select id="noteColor">
+        <option value="pink">薄いピンク</option>
+        <option value="yellow" selected>黄色</option>
+        <option value="blue">水色</option>
+        <option value="green">モスグリーン</option>
+        <option value="white">白</option>
+      </select>
+      <button onclick="addStickyNote()">＋ 付箋を貼る</button>
+    </div>
+
+    <!-- ペン描画 -->
+    <div class="tool-group">
+      <label>ペン入力:</label>
+      <button id="penToggle" onclick="togglePen()">ペン: OFF</button>
+      <select id="penColor">
+        <option value="#e53e3e">赤</option>
+        <option value="#3182ce">青</option>
+      </select>
+      <select id="penWidth">
+        <option value="2">細い (2px)</option>
+        <option value="6">太い (6px)</option>
+      </select>
+      <button onclick="clearCanvas()">描画クリア</button>
+    </div>
+  </div>
+
+  <!-- ボード領域 -->
+  <div id="board-container">
+    <img id="background-img" alt="">
+    <canvas id="drawing-canvas"></canvas>
+  </div>
+
+  <!-- テキストマイニング集計領域 -->
+  <div id="mining-panel">
+    <h4>📊 みんなのコメント頻出キーワード（自動集計）</h4>
+    <div id="word-tags">
+      <span style="color:#94a3b8; font-size:12px;">付箋に文字が入力されると、ここに頻出ワードが集計されます</span>
+    </div>
+  </div>
+
+  <script>
+    // --- 1. 資料（画像）の読み込み ---
+    const fileInput = document.getElementById('fileInput');
+    const backgroundImg = document.getElementById('background-img');
+
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        backgroundImg.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // --- 2. 付箋の追加とドラッグ移動 ---
+    const board = document.getElementById('board-container');
+    let noteIdCounter = 0;
+
+    function addStickyNote(colorClass, text = '', left = 50, top = 50) {
+      const color = colorClass || 'color-' + document.getElementById('noteColor').value;
+      const note = document.createElement('div');
+      note.className = `sticky-note ${color}`;
+      note.style.left = left + 'px';
+      note.style.top = top + 'px';
+
+      note.innerHTML = `
+        <button class="del-btn" onclick="deleteNote(this)">✕</button>
+        <textarea maxlength="100" placeholder="100字以内でコメントを入力...">${text}</textarea>
+      `;
+
+      board.appendChild(note);
+
+      // テキスト入力の監視（マイニング集計）
+      const textarea = note.querySelector('textarea');
+      textarea.addEventListener('input', runTextMining);
+
+      // ドラッグ機能
+      makeDraggable(note);
+      runTextMining();
+    }
+
+    function deleteNote(btn) {
+      btn.parentElement.remove();
+      runTextMining();
+    }
+
+    function makeDraggable(el) {
+      let isDragging = false;
+      let startX, startY, initialLeft, initialTop;
+
+      el.addEventListener('mousedown', (e) => {
+        if (e.target.tagName.toLowerCase() === 'textarea' || e.target.tagName.toLowerCase() === 'button') return;
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        initialLeft = el.offsetLeft;
+        initialTop = el.offsetTop;
+        el.style.zIndex = 30;
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        el.style.left = `${initialLeft + (e.clientX - startX)}px`;
+        el.style.top = `${initialTop + (e.clientY - startY)}px`;
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (isDragging) {
+          isDragging = false;
+          el.style.zIndex = 20;
+        }
+      });
+    }
+
+    // --- 3. ペン入力機能 ---
+    const canvas = document.getElementById('drawing-canvas');
+    const ctx = canvas.getContext('2d');
+    let isDrawing = false;
+    let penActive = false;
+
+    function resizeCanvas() {
+      canvas.width = board.clientWidth;
+      canvas.height = board.clientHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    function togglePen() {
+      penActive = !penActive;
+      const btn = document.getElementById('penToggle');
+      if (penActive) {
+        btn.textContent = 'ペン: ON';
+        btn.classList.add('active');
+        canvas.style.pointerEvents = 'auto';
+      } else {
+        btn.textContent = 'ペン: OFF';
+        btn.classList.remove('active');
+        canvas.style.pointerEvents = 'none';
+      }
+    }
+    canvas.style.pointerEvents = 'none'; // 初期はOFF
+
+    canvas.addEventListener('mousedown', (e) => {
+      if (!penActive) return;
+      isDrawing = true;
+      ctx.beginPath();
+      ctx.moveTo(e.offsetX, e.offsetY);
+      ctx.strokeStyle = document.getElementById('penColor').value;
+      ctx.lineWidth = parseInt(document.getElementById('penWidth').value, 10);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (!isDrawing || !penActive) return;
+      ctx.lineTo(e.offsetX, e.offsetY);
+      ctx.stroke();
+    });
+
+    window.addEventListener('mouseup', () => { isDrawing = false; });
+    function clearCanvas() { ctx.clearRect(0, 0, canvas.width, canvas.height); }
+
+    // --- 4. 自動テキストマイニング（簡易形態素解析） ---
+    // 助詞・助動詞などの不要語を除外
+    const stopWords = new Set(['の','に','は','を','た','が','で','て','と','し','れ','さ','ある','いる','も','する','から','な','こと','として']);
+
+    function runTextMining() {
+      const textareas = document.querySelectorAll('.sticky-note textarea');
+      let combinedText = '';
+      textareas.forEach(t => { combinedText += ' ' + t.value.trim(); });
+
+      // 日本語の単語分割（2文字以上の漢字・カタカナ・連続アルファベットを簡易抽出）
+      const tokens = combinedText.match(/[\u4e00-\u9faf]{2,}|[\u30a1-\u30f6]{2,}|[A-Za-z]{3,}/g) || [];
+      const wordCounts = {};
+
+      tokens.forEach(w => {
+        if (!stopWords.has(w)) {
+          wordCounts[w] = (wordCounts[w] || 0) + 1;
+        }
+      });
+
+      // 出現頻度順にソート（上位8件）
+      const sorted = Object.entries(wordCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      const container = document.getElementById('word-tags');
+      container.innerHTML = '';
+
+      if (sorted.length === 0) {
+        container.innerHTML = '<span style="color:#94a3b8; font-size:12px;">付箋に文字が入力されると、ここに頻出ワードが集計されます</span>';
+        return;
+      }
+
+      sorted.forEach(([word, count]) => {
+        const badge = document.createElement('div');
+        badge.className = 'word-badge';
+        badge.innerHTML = `${word} <span>${count}</span>`;
+        container.appendChild(badge);
+      });
+    }
+  </script>
+</body>
+</html>

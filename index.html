@@ -4,8 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>シンプル共有ホワイトボード</title>
-  <!-- 日本語形態素解析ライブラリ -->
-  <script src="https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/build/kuromoji.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -123,7 +121,7 @@
       z-index: 10;
     }
 
-    /* 付箋スタイル（横長デザイン） */
+    /* 付箋スタイル */
     .sticky-note {
       position: absolute;
       width: 180px;
@@ -189,14 +187,6 @@
       font-size: 13px;
       color: #475569;
       margin-bottom: 6px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    #mining-status {
-      font-size: 11px;
-      color: #94a3b8;
-      font-weight: normal;
     }
     #word-tags {
       display: flex;
@@ -271,10 +261,7 @@
 
   <!-- 下部テキストマイニング -->
   <div id="mining-panel">
-    <h4>
-      📊 みんなのコメント頻出キーワード（自動集計）
-      <span id="mining-status">（日本語解析準備中...）</span>
-    </h4>
+    <h4>📊 みんなのコメント頻出キーワード（自動集計）</h4>
     <div id="word-tags">
       <span style="color:#94a3b8; font-size:12px;">付箋に文字が入力されると、ここに頻出ワードが集計されます</span>
     </div>
@@ -358,7 +345,9 @@
         el.style.top = `${initialTop + (e.clientY - startY)}px`;
       });
 
-      window.addEventListener('mouseup', () => { isDragging = false; });
+      window.addEventListener('mouseup', () => {
+        isDragging = false;
+      });
     }
 
     // 2. 付箋の追加
@@ -436,32 +425,11 @@
     window.addEventListener('mouseup', () => { isDrawing = false; });
     function clearCanvas() { ctx.clearRect(0, 0, canvas.width, canvas.height); }
 
-    // 4. 日本語形態素解析・集計
-    let kuromojiTokenizer = null;
-    const statusEl = document.getElementById('mining-status');
-
-    try {
-      if (window.kuromoji) {
-        kuromoji.builder({ dicPath: "https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict" }).build((err, tokenizer) => {
-          if (err || !tokenizer) {
-            statusEl.textContent = "（標準集計モード）";
-          } else {
-            kuromojiTokenizer = tokenizer;
-            statusEl.textContent = "（高精度解析ON）";
-            runTextMining();
-          }
-        });
-      } else {
-        statusEl.textContent = "（標準集計モード）";
-      }
-    } catch (e) {
-      statusEl.textContent = "（標準集計モード）";
-    }
-
+    // 4. 軽量・高精度の内蔵テキストマイニング
     const stopWords = new Set([
       'こと','もの','よう','ため','そう','これ','それ','あれ','この','その','あの','どこ','だれ','なに',
       'する','ある','いる','なる','できる','思う','いう','見る','いく','くる','の','に','は','を','た',
-      'が','で','て','と','し','れ','さ','から','な','として','ます','です'
+      'が','で','て','と','し','れ','さ','から','な','として','ます','です','ない','あった','した','へ','ば'
     ]);
 
     function runTextMining() {
@@ -469,32 +437,23 @@
       let combinedText = '';
       textareas.forEach(t => { combinedText += ' ' + t.value.trim(); });
 
+      // パターン1: 「漢字＋ひらがな＋漢字」（例: 入れ替え、取り替え、縫い始め）
+      // パターン2: 連続する漢字（2文字以上、例: 冷蔵庫、意欲）
+      // パターン3: 1文字の漢字（例: 針、糸、布、服）
+      // パターン4: カタカナ（2文字以上、例: ミシン、エプロン）
+      // パターン5: アルファベット（3文字以上）
+      const regex = /([\u4e00-\u9faf]+[\u3040-\u309f]{1,2}[\u4e00-\u9faf]+)|([\u4e00-\u9faf]{2,})|([\u4e00-\u9faf])|([\u30a1-\u30f6]{2,})|([A-Za-z]{3,})/g;
+      
+      const tokens = combinedText.match(regex) || [];
       const wordCounts = {};
 
-      if (kuromojiTokenizer) {
-        try {
-          const tokens = kuromojiTokenizer.tokenize(combinedText);
-          tokens.forEach(token => {
-            const pos = token.pos;
-            const posDetail = token.pos_detail_1;
-            const basic = token.basic_form !== '*' ? token.basic_form : token.surface_form;
-
-            const isTargetNoun = (pos === '名詞' && (posDetail === '一般' || posDetail === '固有名詞' || posDetail === 'サ変接続'));
-            const isTargetAdj = (pos === '形容詞' && posDetail === '自立');
-
-            if (isTargetNoun || isTargetAdj) {
-              if (!stopWords.has(basic) && basic.length >= 1 && !/^[\u3040-\u309f]$/.test(basic)) {
-                wordCounts[basic] = (wordCounts[basic] || 0) + 1;
-              }
-            }
-          });
-        } catch(e) {
-          fallbackMining(combinedText, wordCounts);
+      tokens.forEach(w => {
+        if (!stopWords.has(w) && w.length > 0) {
+          wordCounts[w] = (wordCounts[w] || 0) + 1;
         }
-      } else {
-        fallbackMining(combinedText, wordCounts);
-      }
+      });
 
+      // 出現頻度順にソート（上位8件）
       const sorted = Object.entries(wordCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
       const container = document.getElementById('word-tags');
       container.innerHTML = '';
@@ -512,13 +471,10 @@
       });
     }
 
-    function fallbackMining(text, wordCounts) {
-      // 漢字1字以上（針、糸など）または2字以上のカタカナ・英字を抽出
-      const tokens = text.match(/[\u4e00-\u9faf]{1,}|[\u30a1-\u30f6]{2,}|[A-Za-z]{3,}/g) || [];
-      tokens.forEach(w => {
-        if (!stopWords.has(w)) wordCounts[w] = (wordCounts[w] || 0) + 1;
-      });
-    }
+    // 初回起動チェック
+    window.addEventListener('DOMContentLoaded', () => {
+      runTextMining();
+    });
   </script>
 </body>
 </html>

@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>シンプル共有ホワイトボード</title>
+  <!-- PDF読み込み用ライブラリ PDF.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -24,31 +26,37 @@
       display: flex;
       align-items: center;
       padding: 0 16px;
-      gap: 12px;
+      gap: 10px;
       z-index: 100;
       flex-shrink: 0;
+      overflow-x: auto;
     }
     .tool-group {
       display: flex;
       align-items: center;
       gap: 6px;
       border-right: 1px solid #475569;
-      padding-right: 12px;
+      padding-right: 10px;
     }
     .tool-group:last-child { border-right: none; }
-    label { font-size: 13px; font-weight: bold; }
+    label { font-size: 13px; font-weight: bold; white-space: nowrap; }
     button, select, input[type="file"] {
-      padding: 6px 12px;
+      padding: 6px 10px;
       border-radius: 6px;
       border: 1px solid #64748b;
       background: #334155;
       color: white;
       cursor: pointer;
-      font-size: 13px;
+      font-size: 12px;
+      white-space: nowrap;
     }
     button.active {
-      background: #2563eb;
-      border-color: #60a5fa;
+      background: #2563eb !important;
+      border-color: #60a5fa !important;
+    }
+    button.danger {
+      background: #dc2626;
+      border-color: #ef4444;
     }
 
     /* メイン領域 */
@@ -59,7 +67,7 @@
       background: #cbd5e1;
     }
 
-    /* 移動・ピン留めできる資料枠 */
+    /* 移動・ピン留め・トリミングできる資料枠 */
     #doc-wrapper {
       position: absolute;
       top: 40px;
@@ -85,30 +93,62 @@
       resize: none;
     }
 
-    .doc-pin-btn {
+    /* 資料上部の操作ボタンバー */
+    .doc-controls {
       position: absolute;
       top: 6px;
       left: 6px;
-      z-index: 20;
+      right: 6px;
+      display: flex;
+      justify-content: space-between;
+      z-index: 25;
+      pointer-events: none;
+    }
+    .doc-btn-group {
+      display: flex;
+      gap: 4px;
+      pointer-events: auto;
+    }
+    .doc-controls button {
       background: rgba(30, 41, 59, 0.85);
       color: #fff;
       border: none;
       padding: 4px 8px;
       border-radius: 4px;
-      font-size: 12px;
+      font-size: 11px;
       cursor: pointer;
     }
-    .doc-pin-btn.is-pinned {
+    .doc-controls button.is-pinned {
       background: #dc2626;
-      color: white;
+    }
+    .doc-controls button.del-doc {
+      background: rgba(220, 38, 38, 0.85);
     }
 
-    #doc-wrapper img {
+    #background-img {
       width: 100%;
       height: 100%;
       object-fit: contain;
       display: block;
       pointer-events: none;
+    }
+
+    /* トリミング用オーバーレイ */
+    #crop-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 20;
+      display: none;
+      cursor: crosshair;
+    }
+    #crop-box {
+      position: absolute;
+      border: 2px dashed #2563eb;
+      background: rgba(37, 99, 235, 0.15);
+      display: none;
     }
 
     /* ペン描画キャンバス */
@@ -121,6 +161,16 @@
       z-index: 10;
     }
 
+    /* 範囲クリア用の点線枠 */
+    #selection-box {
+      position: absolute;
+      border: 2px dashed #ef4444;
+      background: rgba(239, 68, 68, 0.15);
+      display: none;
+      z-index: 15;
+      pointer-events: none;
+    }
+
     /* 付箋スタイル */
     .sticky-note {
       position: absolute;
@@ -131,7 +181,7 @@
       padding: 8px 10px;
       border-radius: 8px;
       box-shadow: 2px 4px 8px rgba(0,0,0,0.15);
-      z-index: 20;
+      z-index: 30;
       cursor: grab;
       display: flex;
       flex-direction: column;
@@ -169,7 +219,7 @@
     .color-pink   { background-color: #ffd1dc; }
     .color-yellow { background-color: #fff9b1; }
     .color-blue   { background-color: #cce5ff; }
-    .color-green  { background-color: #d9f99d; } /* 明るい薄い黄緑 */
+    .color-green  { background-color: #d9f99d; }
     .color-white  { background-color: #ffffff; }
 
     /* 下部テキストマイニング集計 */
@@ -217,14 +267,16 @@
 
   <!-- ツールバー -->
   <div id="toolbar">
+    <!-- 資料配置 -->
     <div class="tool-group">
-      <label>資料(画像):</label>
-      <input type="file" id="fileInput" accept="image/*">
+      <label>資料:</label>
+      <input type="file" id="fileInput" accept="image/*,.pdf">
       <button onclick="resetDocPosition()" title="初期位置・サイズに戻す">位置リセット</button>
     </div>
 
+    <!-- 付箋追加 -->
     <div class="tool-group">
-      <label>付箋追加:</label>
+      <label>付箋:</label>
       <select id="noteColor">
         <option value="pink">薄いピンク</option>
         <option value="yellow" selected>黄色</option>
@@ -232,12 +284,13 @@
         <option value="green">薄い黄緑</option>
         <option value="white">白</option>
       </select>
-      <button onclick="addStickyNote()">＋ 付箋を貼る</button>
+      <button onclick="addStickyNote()">＋ 付箋</button>
     </div>
 
+    <!-- ペン・描画操作 -->
     <div class="tool-group">
-      <label>ペン入力:</label>
-      <button id="penToggle" onclick="togglePen()">ペン: OFF</button>
+      <label>描画:</label>
+      <button id="penBtn" onclick="setMode('pen')">ペン: OFF</button>
       <select id="penColor">
         <option value="#e53e3e">赤</option>
         <option value="#3182ce">青</option>
@@ -246,17 +299,40 @@
         <option value="2">細い (2px)</option>
         <option value="6">太い (6px)</option>
       </select>
-      <button onclick="clearCanvas()">描画クリア</button>
+    </div>
+
+    <!-- 消しゴム & 範囲クリア機能 -->
+    <div class="tool-group">
+      <button id="eraserBtn" onclick="setMode('eraser')">消しゴム</button>
+      <button id="selectClearBtn" onclick="setMode('selectClear')">範囲クリア</button>
+      <button onclick="clearCanvas()" class="danger">全消去</button>
     </div>
   </div>
 
   <!-- ボード領域 -->
   <div id="board-container">
+    <!-- 資料枠 -->
     <div id="doc-wrapper">
-      <button class="doc-pin-btn" id="pinBtn" onclick="togglePinDoc(event)">📌 ピン留め</button>
+      <div class="doc-controls">
+        <div class="doc-btn-group">
+          <button id="pinBtn" onclick="togglePinDoc(event)">📌 ピン留め</button>
+          <button id="cropToggleBtn" onclick="startCrop(event)">✂️ 切り抜き</button>
+        </div>
+        <div class="doc-btn-group">
+          <button class="del-doc" onclick="deleteDoc(event)">🗑️ 削除</button>
+        </div>
+      </div>
       <img id="background-img" alt="">
+      <!-- トリミング枠 -->
+      <div id="crop-layer">
+        <div id="crop-box"></div>
+      </div>
     </div>
+
+    <!-- 描画キャンバス -->
     <canvas id="drawing-canvas"></canvas>
+    <!-- 範囲クリア用四角枠 -->
+    <div id="selection-box"></div>
   </div>
 
   <!-- 下部テキストマイニング -->
@@ -273,29 +349,64 @@
     const backgroundImg = document.getElementById('background-img');
     const pinBtn = document.getElementById('pinBtn');
     let isDocPinned = false;
+    let originalImageSrc = ''; // トリミング前の元データ
 
-    // 1. 資料の読み込み
+    // PDF.jsのWorker設定
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+    // --- 1. 資料の読み込み（画像 & PDF対応） ---
     const fileInput = document.getElementById('fileInput');
-    fileInput.addEventListener('change', (e) => {
+    fileInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
 
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        backgroundImg.src = event.target.result;
-        docWrapper.style.display = 'block';
-        docWrapper.style.left = '40px';
-        docWrapper.style.top = '40px';
-        docWrapper.style.width = '420px';
-        docWrapper.style.height = 'auto';
-        isDocPinned = false;
-        docWrapper.classList.remove('pinned');
-        pinBtn.classList.remove('is-pinned');
-        pinBtn.textContent = '📌 ピン留め';
-      };
-      reader.readAsDataURL(file);
+      if (file.type === 'application/pdf') {
+        const fileReader = new FileReader();
+        fileReader.onload = async function() {
+          const typedarray = new Uint8Array(this.result);
+          const pdf = await pdfjsLib.getDocument(typedarray).promise;
+          const page = await pdf.getPage(1); // 1ページ目をレンダリング
+          const viewport = page.getViewport({ scale: 1.5 });
+          const tempCanvas = document.createElement('canvas');
+          const tempCtx = tempCanvas.getContext('2d');
+          tempCanvas.width = viewport.width;
+          tempCanvas.height = viewport.height;
+          await page.render({ canvasContext: tempCtx, viewport: viewport }).promise;
+          setupDoc(tempCanvas.toDataURL('image/png'));
+        };
+        fileReader.readAsArrayBuffer(file);
+      } else {
+        const reader = new FileReader();
+        reader.onload = (event) => setupDoc(event.target.result);
+        reader.readAsDataURL(file);
+      }
     });
 
+    function setupDoc(src) {
+      originalImageSrc = src;
+      backgroundImg.src = src;
+      docWrapper.style.display = 'block';
+      docWrapper.style.left = '40px';
+      docWrapper.style.top = '40px';
+      docWrapper.style.width = '440px';
+      docWrapper.style.height = 'auto';
+      isDocPinned = false;
+      docWrapper.classList.remove('pinned');
+      pinBtn.classList.remove('is-pinned');
+      pinBtn.textContent = '📌 ピン留め';
+    }
+
+    // ③ 資料の削除機能
+    function deleteDoc(e) {
+      e.stopPropagation();
+      if (!confirm('挿入した資料を削除しますか？')) return;
+      docWrapper.style.display = 'none';
+      backgroundImg.src = '';
+      originalImageSrc = '';
+      fileInput.value = '';
+    }
+
+    // ピン留め切り替え
     function togglePinDoc(e) {
       e.stopPropagation();
       isDocPinned = !isDocPinned;
@@ -314,12 +425,92 @@
       if (docWrapper.style.display !== 'none') {
         docWrapper.style.left = '40px';
         docWrapper.style.top = '40px';
-        docWrapper.style.width = '420px';
+        docWrapper.style.width = '440px';
         docWrapper.style.height = 'auto';
       }
     }
 
-    makeElementDraggable(docWrapper, () => isDocPinned);
+    // ④ 資料のトリミング（切り抜き）機能
+    const cropLayer = document.getElementById('crop-layer');
+    const cropBox = document.getElementById('crop-box');
+    const cropToggleBtn = document.getElementById('cropToggleBtn');
+    let isCropping = false;
+    let cropStartX = 0, cropStartY = 0;
+
+    function startCrop(e) {
+      e.stopPropagation();
+      if (isCropping) {
+        finishCrop();
+        return;
+      }
+      isCropping = true;
+      cropToggleBtn.textContent = '確定 (適用)';
+      cropToggleBtn.style.background = '#2563eb';
+      cropLayer.style.display = 'block';
+    }
+
+    cropLayer.addEventListener('mousedown', (e) => {
+      const rect = cropLayer.getBoundingClientRect();
+      cropStartX = e.clientX - rect.left;
+      cropStartY = e.clientY - rect.top;
+      cropBox.style.left = cropStartX + 'px';
+      cropBox.style.top = cropStartY + 'px';
+      cropBox.style.width = '0px';
+      cropBox.style.height = '0px';
+      cropBox.style.display = 'block';
+
+      function onMouseMove(moveEvent) {
+        const curX = moveEvent.clientX - rect.left;
+        const curY = moveEvent.clientY - rect.top;
+        cropBox.style.left = Math.min(cropStartX, curX) + 'px';
+        cropBox.style.top = Math.min(cropStartY, curY) + 'px';
+        cropBox.style.width = Math.abs(curX - cropStartX) + 'px';
+        cropBox.style.height = Math.abs(curY - cropStartY) + 'px';
+      }
+
+      function onMouseUp() {
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', onMouseUp);
+      }
+
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+    });
+
+    function finishCrop() {
+      const boxW = cropBox.offsetWidth;
+      const boxH = cropBox.offsetHeight;
+      if (boxW > 20 && boxH > 20) {
+        // 表示サイズと画像元解像度の比率を計算して切り抜く
+        const scaleX = backgroundImg.naturalWidth / backgroundImg.clientWidth;
+        const scaleY = backgroundImg.naturalHeight / backgroundImg.clientHeight;
+
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = boxW * scaleX;
+        cropCanvas.height = boxH * scaleY;
+        const cCtx = cropCanvas.getContext('2d');
+
+        cCtx.drawImage(
+          backgroundImg,
+          cropBox.offsetLeft * scaleX,
+          cropBox.offsetTop * scaleY,
+          boxW * scaleX,
+          boxH * scaleY,
+          0, 0, cropCanvas.width, cropCanvas.height
+        );
+
+        backgroundImg.src = cropCanvas.toDataURL();
+      }
+
+      cropBox.style.display = 'none';
+      cropLayer.style.display = 'none';
+      isCropping = false;
+      cropToggleBtn.textContent = '✂️ 切り抜き';
+      cropToggleBtn.style.background = 'rgba(30, 41, 59, 0.85)';
+    }
+
+    // 資料枠のドラッグ移動
+    makeElementDraggable(docWrapper, () => isDocPinned || isCropping);
 
     function makeElementDraggable(el, isLockedFn = () => false) {
       let isDragging = false;
@@ -328,7 +519,6 @@
       el.addEventListener('mousedown', (e) => {
         if (isLockedFn()) return;
         if (e.target.tagName.toLowerCase() === 'textarea' || e.target.tagName.toLowerCase() === 'button') return;
-        
         const rect = el.getBoundingClientRect();
         if (e.clientX > rect.right - 18 && e.clientY > rect.bottom - 18) return;
 
@@ -345,13 +535,11 @@
         el.style.top = `${initialTop + (e.clientY - startY)}px`;
       });
 
-      window.addEventListener('mouseup', () => {
-        isDragging = false;
-      });
+      window.addEventListener('mouseup', () => { isDragging = false; });
     }
 
-    // 2. 付箋の追加
-    function addStickyNote(colorClass, text = '', left = 500, top = 60) {
+    // --- 2. 付箋の追加と移動 ---
+    function addStickyNote(colorClass, text = '', left = 520, top = 60) {
       const color = colorClass || 'color-' + document.getElementById('noteColor').value;
       const note = document.createElement('div');
       note.className = `sticky-note ${color}`;
@@ -364,10 +552,8 @@
       `;
 
       board.appendChild(note);
-
       const textarea = note.querySelector('textarea');
       textarea.addEventListener('input', runTextMining);
-
       makeElementDraggable(note);
       runTextMining();
     }
@@ -377,11 +563,17 @@
       runTextMining();
     }
 
-    // 3. ペン機能
+    // --- 3. 描画モード（ペン・消しゴム・範囲クリア） ---
     const canvas = document.getElementById('drawing-canvas');
     const ctx = canvas.getContext('2d');
+    const penBtn = document.getElementById('penBtn');
+    const eraserBtn = document.getElementById('eraserBtn');
+    const selectClearBtn = document.getElementById('selectClearBtn');
+    const selectionBox = document.getElementById('selection-box');
+
+    let currentMode = 'none'; // 'none' | 'pen' | 'eraser' | 'selectClear'
     let isDrawing = false;
-    let penActive = false;
+    let selStartX = 0, selStartY = 0;
 
     function resizeCanvas() {
       canvas.width = board.clientWidth;
@@ -390,42 +582,106 @@
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    function togglePen() {
-      penActive = !penActive;
-      const btn = document.getElementById('penToggle');
-      if (penActive) {
-        btn.textContent = 'ペン: ON';
-        btn.classList.add('active');
+    function setMode(mode) {
+      if (currentMode === mode) {
+        currentMode = 'none'; // OFFにする
+      } else {
+        currentMode = mode;
+      }
+
+      penBtn.classList.toggle('active', currentMode === 'pen');
+      penBtn.textContent = (currentMode === 'pen') ? 'ペン: ON' : 'ペン: OFF';
+      eraserBtn.classList.toggle('active', currentMode === 'eraser');
+      selectClearBtn.classList.toggle('active', currentMode === 'selectClear');
+
+      if (currentMode === 'pen' || currentMode === 'eraser' || currentMode === 'selectClear') {
         canvas.style.pointerEvents = 'auto';
       } else {
-        btn.textContent = 'ペン: OFF';
-        btn.classList.remove('active');
         canvas.style.pointerEvents = 'none';
       }
     }
     canvas.style.pointerEvents = 'none';
 
+    // マウス押下時の処理
     canvas.addEventListener('mousedown', (e) => {
-      if (!penActive) return;
-      isDrawing = true;
-      ctx.beginPath();
-      ctx.moveTo(e.offsetX, e.offsetY);
-      ctx.strokeStyle = document.getElementById('penColor').value;
-      ctx.lineWidth = parseInt(document.getElementById('penWidth').value, 10);
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
+      if (currentMode === 'none') return;
+
+      if (currentMode === 'pen' || currentMode === 'eraser') {
+        isDrawing = true;
+        ctx.beginPath();
+        ctx.moveTo(e.offsetX, e.offsetY);
+
+        if (currentMode === 'eraser') {
+          // ① 消しゴム処理（描画を透過消去）
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.lineWidth = 18; // 消しやすいように太め
+        } else {
+          // ペン処理
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.strokeStyle = document.getElementById('penColor').value;
+          ctx.lineWidth = parseInt(document.getElementById('penWidth').value, 10);
+        }
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+      } else if (currentMode === 'selectClear') {
+        // ② 描画の選択クリア（範囲指定開始）
+        isDrawing = true;
+        selStartX = e.clientX;
+        selStartY = e.clientY;
+        selectionBox.style.left = selStartX + 'px';
+        selectionBox.style.top = selStartY + 'px';
+        selectionBox.style.width = '0px';
+        selectionBox.style.height = '0px';
+        selectionBox.style.display = 'block';
+      }
     });
 
+    // マウス移動時
     canvas.addEventListener('mousemove', (e) => {
-      if (!isDrawing || !penActive) return;
-      ctx.lineTo(e.offsetX, e.offsetY);
-      ctx.stroke();
+      if (!isDrawing) return;
+
+      if (currentMode === 'pen' || currentMode === 'eraser') {
+        ctx.lineTo(e.offsetX, e.offsetY);
+        ctx.stroke();
+      } else if (currentMode === 'selectClear') {
+        const curX = e.clientX;
+        const curY = e.clientY;
+        selectionBox.style.left = Math.min(selStartX, curX) + 'px';
+        selectionBox.style.top = Math.min(selStartY, curY) + 'px';
+        selectionBox.style.width = Math.abs(curX - selStartX) + 'px';
+        selectionBox.style.height = Math.abs(curY - selStartY) + 'px';
+      }
     });
 
-    window.addEventListener('mouseup', () => { isDrawing = false; });
-    function clearCanvas() { ctx.clearRect(0, 0, canvas.width, canvas.height); }
+    // マウス離した時
+    window.addEventListener('mouseup', (e) => {
+      if (!isDrawing) return;
+      isDrawing = false;
 
-    // 4. 軽量・高精度の内蔵テキストマイニング
+      if (currentMode === 'selectClear') {
+        // 指定した四角範囲の線を一気に消去
+        const rect = board.getBoundingClientRect();
+        const selLeft = Math.min(selStartX, e.clientX) - rect.left;
+        const selTop = Math.min(selStartY, e.clientY) - rect.top;
+        const selW = Math.abs(e.clientX - selStartX);
+        const selH = Math.abs(e.clientY - selStartY);
+
+        if (selW > 5 && selH > 5) {
+          ctx.clearRect(selLeft, selTop, selW, selH);
+        }
+        selectionBox.style.display = 'none';
+        setMode('none'); // クリア後に通常モードに戻す
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    });
+
+    function clearCanvas() {
+      if (confirm('描いた線をすべて消去しますか？')) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+
+    // --- 4. テキストマイニング集計 ---
     const stopWords = new Set([
       'こと','もの','よう','ため','そう','これ','それ','あれ','この','その','あの','どこ','だれ','なに',
       'する','ある','いる','なる','できる','思う','いう','見る','いく','くる','の','に','は','を','た',
@@ -437,13 +693,7 @@
       let combinedText = '';
       textareas.forEach(t => { combinedText += ' ' + t.value.trim(); });
 
-      // パターン1: 「漢字＋ひらがな＋漢字」（例: 入れ替え、取り替え、縫い始め）
-      // パターン2: 連続する漢字（2文字以上、例: 冷蔵庫、意欲）
-      // パターン3: 1文字の漢字（例: 針、糸、布、服）
-      // パターン4: カタカナ（2文字以上、例: ミシン、エプロン）
-      // パターン5: アルファベット（3文字以上）
       const regex = /([\u4e00-\u9faf]+[\u3040-\u309f]{1,2}[\u4e00-\u9faf]+)|([\u4e00-\u9faf]{2,})|([\u4e00-\u9faf])|([\u30a1-\u30f6]{2,})|([A-Za-z]{3,})/g;
-      
       const tokens = combinedText.match(regex) || [];
       const wordCounts = {};
 
@@ -453,7 +703,6 @@
         }
       });
 
-      // 出現頻度順にソート（上位8件）
       const sorted = Object.entries(wordCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
       const container = document.getElementById('word-tags');
       container.innerHTML = '';
@@ -471,10 +720,10 @@
       });
     }
 
-    // 初回起動チェック
     window.addEventListener('DOMContentLoaded', () => {
       runTextMining();
     });
   </script>
 </body>
 </html>
+

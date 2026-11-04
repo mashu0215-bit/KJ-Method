@@ -3,9 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>シンプル共有ホワイトボード</title>
-  <!-- PDF読み込み用ライブラリ PDF.js -->
+  <title>リアルタイム共有ホワイトボード</title>
+  <!-- PDF.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <!-- Firebase SDK (互換バージョン) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <style>
     * { 
       box-sizing: border-box; 
@@ -67,6 +70,13 @@
       background: #dc2626;
       border-color: #ef4444;
     }
+    .room-badge {
+      font-size: 11px;
+      color: #38bdf8;
+      margin-left: auto;
+      white-space: nowrap;
+      padding-left: 8px;
+    }
 
     /* メイン作業領域 */
     #board-container {
@@ -77,13 +87,13 @@
       touch-action: none;
     }
 
-    /* PDF・資料枠 */
+    /* 資料枠 */
     #doc-wrapper {
       position: absolute;
       top: 40px;
       left: 40px;
       display: none;
-      z-index: 20; /* 描画キャンバスより手前で確実に掴める */
+      z-index: 20;
       cursor: move;
       border: 2px dashed rgba(71, 85, 105, 0.5);
       background: white;
@@ -161,7 +171,7 @@
       display: none;
     }
 
-    /* 描画キャンバス（描画モードOFF時はクリック・タッチを完全に透過） */
+    /* 描画キャンバス */
     #drawing-canvas {
       position: absolute;
       top: 0;
@@ -169,15 +179,15 @@
       width: 100%;
       height: 100%;
       z-index: 10;
-      pointer-events: none; /* 初期値は透過 */
+      pointer-events: none;
       touch-action: none;
     }
     #drawing-canvas.active-mode {
-      z-index: 40; /* ペンや消しゴム使用時は最前面にして描画 */
+      z-index: 40;
       pointer-events: auto;
     }
 
-    /* 範囲クリア用枠 */
+    /* 範囲クリア枠 */
     #selection-box {
       position: absolute;
       border: 2px dashed #ef4444;
@@ -197,7 +207,7 @@
       padding: 8px 10px;
       border-radius: 8px;
       box-shadow: 2px 4px 10px rgba(0,0,0,0.18);
-      z-index: 30; /* 資料枠より前面 */
+      z-index: 30;
       cursor: move;
       display: flex;
       flex-direction: column;
@@ -241,7 +251,7 @@
     .color-green  { background-color: #d9f99d; }
     .color-white  { background-color: #ffffff; }
 
-    /* 下部テキストマイニング集計 */
+    /* テキストマイニング集計 */
     #mining-panel {
       height: 90px;
       background: #ffffff;
@@ -303,7 +313,7 @@
         <option value="green">薄い黄緑</option>
         <option value="white">白</option>
       </select>
-      <button onclick="addStickyNote()">＋ 付箋</button>
+      <button onclick="createAndSyncNote()">＋ 付箋</button>
     </div>
 
     <div class="tool-group">
@@ -322,13 +332,14 @@
     <div class="tool-group">
       <button id="eraserBtn" onclick="setMode('eraser')">消しゴム</button>
       <button id="selectClearBtn" onclick="setMode('selectClear')">範囲クリア</button>
-      <button onclick="clearCanvas()" class="danger">全消去</button>
+      <button onclick="clearCanvasAndSync()" class="danger">全消去</button>
     </div>
+
+    <div class="room-badge" id="roomStatus">接続中...</div>
   </div>
 
   <!-- ボード領域 -->
   <div id="board-container">
-    <!-- 資料枠 -->
     <div id="doc-wrapper">
       <div class="doc-controls">
         <div class="doc-btn-group">
@@ -358,6 +369,30 @@
   </div>
 
   <script>
+    // --- Firebase初期化（ご提示いただいた設定） ---
+    const firebaseConfig = {
+      apiKey: "AIzaSyCFFkjI_xURyIKl-0KA69y2brkDVsdx03w",
+      authDomain: "whiteboard-share-kohan.firebaseapp.com",
+      databaseURL: "https://whiteboard-share-kohan-default-rtdb.firebaseio.com",
+      projectId: "whiteboard-share-kohan",
+      storageBucket: "whiteboard-share-kohan.firebasestorage.app",
+      messagingSenderId: "400013481217",
+      appId: "1:400013481217:web:fde9e0372a55949fcef700"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // ルームID取得（URL末尾のハッシュ #room1 等。無ければ 'main'）
+    const roomId = (window.location.hash.substring(1) || 'main').replace(/[.#$\[\]]/g, '_');
+    const roomRef = db.ref('rooms/' + roomId);
+    const notesRef = roomRef.child('notes');
+    const strokesRef = roomRef.child('strokes');
+    const docRef = roomRef.child('doc');
+
+    document.getElementById('roomStatus').textContent = `🟢 ルーム: ${roomId}`;
+
+    // --- 基本変数 ---
     const board = document.getElementById('board-container');
     const docWrapper = document.getElementById('doc-wrapper');
     const backgroundImg = document.getElementById('background-img');
@@ -365,11 +400,10 @@
     const canvas = document.getElementById('drawing-canvas');
     const ctx = canvas.getContext('2d');
     let isDocPinned = false;
+    let highestZ = 35;
 
-    // PDF.jsの設定
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
-    // 画面・タッチ座標取得
     function getPointerPos(e, targetEl = null) {
       const touch = (e.touches && e.touches.length > 0) ? e.touches[0] : ((e.changedTouches && e.changedTouches.length > 0) ? e.changedTouches[0] : e);
       if (targetEl) {
@@ -384,7 +418,7 @@
       return { clientX: touch.clientX, clientY: touch.clientY };
     }
 
-    // --- 1. 資料（画像・PDF）の読み込み ---
+    // --- 1. 資料の同期処理 ---
     const fileInput = document.getElementById('fileInput');
     fileInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
@@ -396,46 +430,62 @@
           const typedarray = new Uint8Array(this.result);
           const pdf = await pdfjsLib.getDocument(typedarray).promise;
           const page = await pdf.getPage(1);
-          const viewport = page.getViewport({ scale: 1.5 });
+          const viewport = page.getViewport({ scale: 1.2 });
           const tempCanvas = document.createElement('canvas');
           const tempCtx = tempCanvas.getContext('2d');
           tempCanvas.width = viewport.width;
           tempCanvas.height = viewport.height;
           await page.render({ canvasContext: tempCtx, viewport: viewport }).promise;
-          setupDoc(tempCanvas.toDataURL('image/png'));
+          syncDocUpdate({ src: tempCanvas.toDataURL('image/jpeg', 0.7), left: 40, top: 40, width: 440, pinned: false });
         };
         fileReader.readAsArrayBuffer(file);
       } else {
         const reader = new FileReader();
-        reader.onload = (event) => setupDoc(event.target.result);
+        reader.onload = (event) => {
+          // 画像を圧縮して軽量化送信
+          compressImage(event.target.result, 900, 0.7, (compressedSrc) => {
+            syncDocUpdate({ src: compressedSrc, left: 40, top: 40, width: 440, pinned: false });
+          });
+        };
         reader.readAsDataURL(file);
       }
     });
 
-    function setupDoc(src) {
-      backgroundImg.src = src;
+    function compressImage(src, maxDim, quality, cb) {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) { h = (h * maxDim) / w; w = maxDim; }
+          else { w = (w * maxDim) / h; h = maxDim; }
+        }
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const cx = c.getContext('2d');
+        cx.drawImage(img, 0, 0, w, h);
+        cb(c.toDataURL('image/jpeg', quality));
+      };
+      img.src = src;
+    }
+
+    function syncDocUpdate(docData) {
+      docRef.set(docData);
+    }
+
+    docRef.on('value', (snapshot) => {
+      const data = snapshot.val();
+      if (!data || !data.src) {
+        docWrapper.style.display = 'none';
+        backgroundImg.src = '';
+        return;
+      }
+      backgroundImg.src = data.src;
       docWrapper.style.display = 'block';
-      docWrapper.style.left = '40px';
-      docWrapper.style.top = '40px';
-      docWrapper.style.width = '440px';
-      docWrapper.style.height = 'auto';
-      isDocPinned = false;
-      docWrapper.classList.remove('pinned');
-      pinBtn.classList.remove('is-pinned');
-      pinBtn.textContent = '📌 ピン留め';
-    }
+      docWrapper.style.left = (data.left || 40) + 'px';
+      docWrapper.style.top = (data.top || 40) + 'px';
+      if (data.width) docWrapper.style.width = data.width + 'px';
+      isDocPinned = !!data.pinned;
 
-    function deleteDoc(e) {
-      e.stopPropagation();
-      if (!confirm('挿入した資料を削除しますか？')) return;
-      docWrapper.style.display = 'none';
-      backgroundImg.src = '';
-      fileInput.value = '';
-    }
-
-    function togglePinDoc(e) {
-      e.stopPropagation();
-      isDocPinned = !isDocPinned;
       if (isDocPinned) {
         docWrapper.classList.add('pinned');
         pinBtn.classList.add('is-pinned');
@@ -445,18 +495,25 @@
         pinBtn.classList.remove('is-pinned');
         pinBtn.textContent = '📌 ピン留め';
       }
+    });
+
+    function deleteDoc(e) {
+      e.stopPropagation();
+      if (!confirm('共有中の資料を削除しますか？')) return;
+      docRef.remove();
+      fileInput.value = '';
+    }
+
+    function togglePinDoc(e) {
+      e.stopPropagation();
+      docRef.child('pinned').set(!isDocPinned);
     }
 
     function resetDocPosition() {
-      if (docWrapper.style.display !== 'none') {
-        docWrapper.style.left = '40px';
-        docWrapper.style.top = '40px';
-        docWrapper.style.width = '440px';
-        docWrapper.style.height = 'auto';
-      }
+      docRef.update({ left: 40, top: 40, width: 440 });
     }
 
-    // --- トリミング機能 ---
+    // 資料トリミング
     const cropLayer = document.getElementById('crop-layer');
     const cropBox = document.getElementById('crop-box');
     const cropToggleBtn = document.getElementById('cropToggleBtn');
@@ -465,10 +522,7 @@
 
     function startCrop(e) {
       e.stopPropagation();
-      if (isCropping) {
-        finishCrop();
-        return;
-      }
+      if (isCropping) { finishCrop(); return; }
       isCropping = true;
       cropToggleBtn.textContent = '確定 (適用)';
       cropToggleBtn.style.background = '#2563eb';
@@ -477,12 +531,10 @@
 
     function onCropStart(e) {
       const pos = getPointerPos(e, cropLayer);
-      cropStartX = pos.x;
-      cropStartY = pos.y;
+      cropStartX = pos.x; cropStartY = pos.y;
       cropBox.style.left = cropStartX + 'px';
       cropBox.style.top = cropStartY + 'px';
-      cropBox.style.width = '0px';
-      cropBox.style.height = '0px';
+      cropBox.style.width = '0px'; cropBox.style.height = '0px';
       cropBox.style.display = 'block';
 
       function onCropMove(moveEvent) {
@@ -528,7 +580,7 @@
           boxH * scaleY,
           0, 0, cropCanvas.width, cropCanvas.height
         );
-        backgroundImg.src = cropCanvas.toDataURL();
+        docRef.child('src').set(cropCanvas.toDataURL('image/jpeg', 0.7));
       }
 
       cropBox.style.display = 'none';
@@ -538,9 +590,8 @@
       cropToggleBtn.style.background = 'rgba(30, 41, 59, 0.85)';
     }
 
-    // --- 汎用ドラッグ移動（付箋・資料兼用） ---
-    let highestZ = 35;
-    function makeDraggable(el, isLockedFn = () => false) {
+    // ドラッグ移動処理（ドラッグ終了時にFirebase同期）
+    function makeElementDraggable(el, onEndSync = null, isLockedFn = () => false) {
       let isDragging = false;
       let startX, startY, initialLeft, initialTop;
 
@@ -551,7 +602,6 @@
 
         const pos = getPointerPos(e);
         const rect = el.getBoundingClientRect();
-        // 右下リサイズつまみ（角26px四方）の操作時はドラッグしない
         if (pos.clientX > rect.right - 26 && pos.clientY > rect.bottom - 26) return;
 
         isDragging = true;
@@ -561,7 +611,7 @@
         initialTop = el.offsetTop;
 
         highestZ++;
-        el.style.zIndex = highestZ; // 触った要素を最前面へ
+        el.style.zIndex = highestZ;
       }
 
       function onMove(e) {
@@ -573,7 +623,9 @@
       }
 
       function onEnd() {
+        if (!isDragging) return;
         isDragging = false;
+        if (onEndSync) onEndSync(el.offsetLeft, el.offsetTop);
       }
 
       el.addEventListener('mousedown', onStart);
@@ -585,62 +637,142 @@
       window.addEventListener('touchend', onEnd);
     }
 
-    makeDraggable(docWrapper, () => isDocPinned || isCropping);
+    makeElementDraggable(docWrapper, (l, t) => {
+      docRef.update({ left: l, top: t, width: docWrapper.offsetWidth });
+    }, () => isDocPinned || isCropping);
 
-    // --- 2. 付箋の追加と移動 ---
-    function addStickyNote(colorClass, text = '', left = 520, top = 60) {
-      const color = colorClass || 'color-' + document.getElementById('noteColor').value;
+    // --- 2. 付箋の同期処理 ---
+    function createAndSyncNote() {
+      const color = document.getElementById('noteColor').value;
+      const newRef = notesRef.push();
+      newRef.set({
+        color: color,
+        text: '',
+        left: 500 + Math.floor(Math.random() * 40),
+        top: 60 + Math.floor(Math.random() * 40),
+        width: 180,
+        height: 100
+      });
+    }
+
+    // 付箋の追加受信
+    notesRef.on('child_added', (snapshot) => {
+      const id = snapshot.key;
+      const val = snapshot.val();
+      renderNote(id, val);
+      runTextMining();
+    });
+
+    // 付箋の更新受信（文字・位置・サイズ）
+    notesRef.on('child_changed', (snapshot) => {
+      const id = snapshot.key;
+      const val = snapshot.val();
+      const noteEl = document.getElementById('note-' + id);
+      if (!noteEl) return;
+
+      const textarea = noteEl.querySelector('textarea');
+      if (document.activeElement !== textarea && textarea.value !== val.text) {
+        textarea.value = val.text || '';
+      }
+      noteEl.className = `sticky-note color-${val.color}`;
+      noteEl.style.left = val.left + 'px';
+      noteEl.style.top = val.top + 'px';
+      if (val.width) noteEl.style.width = val.width + 'px';
+      if (val.height) noteEl.style.height = val.height + 'px';
+      runTextMining();
+    });
+
+    // 付箋の削除受信
+    notesRef.on('child_removed', (snapshot) => {
+      const id = snapshot.key;
+      const noteEl = document.getElementById('note-' + id);
+      if (noteEl) noteEl.remove();
+      runTextMining();
+    });
+
+    function renderNote(id, data) {
+      if (document.getElementById('note-' + id)) return;
+
       const note = document.createElement('div');
-      note.className = `sticky-note ${color}`;
-      note.style.left = left + 'px';
-      note.style.top = top + 'px';
+      note.id = 'note-' + id;
+      note.className = `sticky-note color-${data.color}`;
+      note.style.left = (data.left || 500) + 'px';
+      note.style.top = (data.top || 60) + 'px';
+      if (data.width) note.style.width = data.width + 'px';
+      if (data.height) note.style.height = data.height + 'px';
 
       note.innerHTML = `
-        <button class="del-btn" onclick="deleteNote(this)">✕</button>
-        <textarea maxlength="100" placeholder="100字以内でコメントを入力...">${text}</textarea>
+        <button class="del-btn" onclick="deleteAndSyncNote('${id}')">✕</button>
+        <textarea maxlength="100" placeholder="100字以内でコメントを入力...">${data.text || ''}</textarea>
       `;
 
       board.appendChild(note);
+
       const textarea = note.querySelector('textarea');
-      textarea.addEventListener('input', runTextMining);
-      makeDraggable(note);
-      runTextMining();
+      // 文字入力時の同期（連続送信を防ぐデバウンス処理）
+      let inputTimer;
+      textarea.addEventListener('input', () => {
+        clearTimeout(inputTimer);
+        inputTimer = setTimeout(() => {
+          notesRef.child(id).update({ text: textarea.value });
+        }, 250);
+        runTextMining();
+      });
+
+      // 移動完了時の同期
+      makeElementDraggable(note, (l, t) => {
+        notesRef.child(id).update({
+          left: l,
+          top: t,
+          width: note.offsetWidth,
+          height: note.offsetHeight
+        });
+      });
+
+      // リサイズ完了の監視
+      const resizeObserver = new ResizeObserver(() => {
+        notesRef.child(id).update({
+          width: note.offsetWidth,
+          height: note.offsetHeight
+        });
+      });
+      resizeObserver.observe(note);
     }
 
-    function deleteNote(btn) {
-      btn.parentElement.remove();
-      runTextMining();
+    function deleteAndSyncNote(id) {
+      notesRef.child(id).remove();
     }
 
-    // --- 3. 描画モード（ペン・消しゴム・範囲クリア） ---
+    // --- 3. 手書き描画の同期処理 ---
     const penBtn = document.getElementById('penBtn');
     const eraserBtn = document.getElementById('eraserBtn');
     const selectClearBtn = document.getElementById('selectClearBtn');
     const selectionBox = document.getElementById('selection-box');
 
-    let currentMode = 'none'; // 'none' | 'pen' | 'eraser' | 'selectClear'
+    let currentMode = 'none';
     let isDrawing = false;
+    let currentStrokePoints = [];
     let selStartX = 0, selStartY = 0;
 
     function resizeCanvas() {
       canvas.width = board.clientWidth;
       canvas.height = board.clientHeight;
+      redrawAllStrokes();
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
     function setMode(mode) {
       currentMode = (currentMode === mode) ? 'none' : mode;
-
       penBtn.classList.toggle('active', currentMode === 'pen');
       penBtn.textContent = (currentMode === 'pen') ? 'ペン: ON' : 'ペン: OFF';
       eraserBtn.classList.toggle('active', currentMode === 'eraser');
       selectClearBtn.classList.toggle('active', currentMode === 'selectClear');
 
       if (currentMode !== 'none') {
-        canvas.classList.add('active-mode'); // 描画時のみ最前面で受け付ける
+        canvas.classList.add('active-mode');
       } else {
-        canvas.classList.remove('active-mode'); // 通常時は完全透過して付箋やPDFを操作可能に
+        canvas.classList.remove('active-mode');
       }
     }
 
@@ -652,6 +784,7 @@
 
       if (currentMode === 'pen' || currentMode === 'eraser') {
         isDrawing = true;
+        currentStrokePoints = [{ x: Math.round(pos.x), y: Math.round(pos.y) }];
         ctx.beginPath();
         ctx.moveTo(pos.x, pos.y);
 
@@ -687,14 +820,13 @@
       if (currentMode === 'pen' || currentMode === 'eraser') {
         ctx.lineTo(pos.x, pos.y);
         ctx.stroke();
+        currentStrokePoints.push({ x: Math.round(pos.x), y: Math.round(pos.y) });
       } else if (currentMode === 'selectClear') {
         const screenPos = getPointerPos(e);
-        const curX = screenPos.clientX;
-        const curY = screenPos.clientY;
-        selectionBox.style.left = Math.min(selStartX, curX) + 'px';
-        selectionBox.style.top = Math.min(selStartY, curY) + 'px';
-        selectionBox.style.width = Math.abs(curX - selStartX) + 'px';
-        selectionBox.style.height = Math.abs(curY - selStartY) + 'px';
+        selectionBox.style.left = Math.min(selStartX, screenPos.clientX) + 'px';
+        selectionBox.style.top = Math.min(selStartY, screenPos.clientY) + 'px';
+        selectionBox.style.width = Math.abs(screenPos.clientX - selStartX) + 'px';
+        selectionBox.style.height = Math.abs(screenPos.clientY - selStartY) + 'px';
       }
     }
 
@@ -702,7 +834,16 @@
       if (!isDrawing) return;
       isDrawing = false;
 
-      if (currentMode === 'selectClear') {
+      if (currentMode === 'pen' || currentMode === 'eraser') {
+        if (currentStrokePoints.length > 0) {
+          strokesRef.push({
+            type: currentMode,
+            color: document.getElementById('penColor').value,
+            width: currentMode === 'eraser' ? 26 : parseInt(document.getElementById('penWidth').value, 10),
+            points: currentStrokePoints
+          });
+        }
+      } else if (currentMode === 'selectClear') {
         const screenPos = getPointerPos(e);
         const rect = board.getBoundingClientRect();
         const selLeft = Math.min(selStartX, screenPos.clientX) - rect.left;
@@ -711,7 +852,11 @@
         const selH = Math.abs(screenPos.clientY - selStartY);
 
         if (selW > 5 && selH > 5) {
-          ctx.clearRect(selLeft, selTop, selW, selH);
+          // 範囲クリアを同期記録
+          strokesRef.push({
+            type: 'clearArea',
+            area: { left: selLeft, top: selTop, width: selW, height: selH }
+          });
         }
         selectionBox.style.display = 'none';
         setMode('none');
@@ -727,9 +872,44 @@
     canvas.addEventListener('touchmove', moveDrawing, { passive: false });
     window.addEventListener('touchend', stopDrawing);
 
-    function clearCanvas() {
-      if (confirm('描いた線をすべて消去しますか？')) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // 描画データの全同期受信
+    let allStrokes = {};
+    strokesRef.on('value', (snapshot) => {
+      allStrokes = snapshot.val() || {};
+      redrawAllStrokes();
+    });
+
+    function redrawAllStrokes() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      Object.values(allStrokes).forEach(stroke => {
+        if (!stroke) return;
+        if (stroke.type === 'clearArea' && stroke.area) {
+          ctx.clearRect(stroke.area.left, stroke.area.top, stroke.area.width, stroke.area.height);
+        } else if (stroke.points && stroke.points.length > 0) {
+          ctx.beginPath();
+          ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          if (stroke.type === 'eraser') {
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.lineWidth = stroke.width || 26;
+          } else {
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.strokeStyle = stroke.color || '#e53e3e';
+            ctx.lineWidth = stroke.width || 2;
+          }
+          for (let i = 1; i < stroke.points.length; i++) {
+            ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+          }
+          ctx.stroke();
+        }
+      });
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    function clearCanvasAndSync() {
+      if (confirm('全員の画面から描いた線をすべて消去しますか？')) {
+        strokesRef.remove();
       }
     }
 
@@ -778,5 +958,3 @@
   </script>
 </body>
 </html>
-
-

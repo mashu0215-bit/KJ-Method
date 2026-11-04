@@ -28,7 +28,6 @@
       touch-action: none;
     }
 
-    /* ツールバー */
     #toolbar {
       height: 54px;
       background: #1e293b;
@@ -78,7 +77,6 @@
       padding-left: 8px;
     }
 
-    /* メイン作業領域 */
     #board-container {
       flex: 1;
       position: relative;
@@ -87,7 +85,6 @@
       touch-action: none;
     }
 
-    /* 資料枠：画像が無いときは絶対に表示させない */
     #doc-wrapper {
       position: absolute;
       top: 40px;
@@ -137,12 +134,8 @@
       font-size: 11px;
       cursor: pointer;
     }
-    .doc-controls button.is-pinned {
-      background: #dc2626;
-    }
-    .doc-controls button.del-doc {
-      background: rgba(220, 38, 38, 0.85);
-    }
+    .doc-controls button.is-pinned { background: #dc2626; }
+    .doc-controls button.del-doc { background: rgba(220, 38, 38, 0.85); }
 
     #background-img {
       width: 100%;
@@ -170,7 +163,6 @@
       display: none;
     }
 
-    /* 描画キャンバス：ペンON時は z-index: 90 で最前面へ */
     #drawing-canvas {
       position: absolute;
       top: 0;
@@ -186,7 +178,6 @@
       pointer-events: auto !important;
     }
 
-    /* 範囲クリア枠 */
     #selection-box {
       position: absolute;
       border: 2px dashed #ef4444;
@@ -196,7 +187,6 @@
       pointer-events: none;
     }
 
-    /* 付箋スタイル（5色を厳格に指定、未指定時は黄色） */
     .sticky-note {
       position: absolute;
       width: 180px;
@@ -251,7 +241,6 @@
     .sticky-note.color-green  { background-color: #d9f99d !important; }
     .sticky-note.color-white  { background-color: #ffffff !important; }
 
-    /* テキストマイニング集計 */
     #mining-panel {
       height: 90px;
       background: #ffffff;
@@ -296,7 +285,6 @@
 </head>
 <body>
 
-  <!-- ツールバー -->
   <div id="toolbar">
     <div class="tool-group">
       <label>資料:</label>
@@ -338,7 +326,6 @@
     <div class="room-badge" id="roomStatus">接続中...</div>
   </div>
 
-  <!-- メインボード -->
   <div id="board-container">
     <div id="doc-wrapper">
       <div class="doc-controls">
@@ -360,7 +347,6 @@
     <div id="selection-box"></div>
   </div>
 
-  <!-- 下部テキストマイニング -->
   <div id="mining-panel">
     <h4>📊 みんなのコメント頻出キーワード（自動集計）</h4>
     <div id="word-tags">
@@ -433,7 +419,6 @@
       return { clientX: touch.clientX, clientY: touch.clientY };
     }
 
-    // --- 1. 資料の読み込み ---
     const fileInput = document.getElementById('fileInput');
     fileInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
@@ -541,7 +526,6 @@
       if (isFirebaseReady && docRef) docRef.update({ left: 40, top: 40, width: 440 });
     }
 
-    // 資料トリミング
     const cropLayer = document.getElementById('crop-layer');
     const cropBox = document.getElementById('crop-box');
     const cropToggleBtn = document.getElementById('cropToggleBtn');
@@ -620,7 +604,6 @@
       cropToggleBtn.style.background = 'rgba(30, 41, 59, 0.85)';
     }
 
-    // ドラッグ移動処理
     function makeElementDraggable(el, onEndSync = null, isLockedFn = () => false) {
       let isDragging = false;
       let startX, startY, initialLeft, initialTop;
@@ -684,8 +667,7 @@
       };
 
       if (isFirebaseReady && notesRef) {
-        const newRef = notesRef.push();
-        newRef.set(data);
+        notesRef.push(data);
       } else {
         localNoteId++;
         renderNote('local_' + localNoteId, data);
@@ -781,16 +763,18 @@
       }
     }
 
+    // ✕ボタン押下で即時画面から消し、DBからも削除
     function deleteNote(id) {
       const noteEl = document.getElementById('note-' + id);
       if (noteEl) noteEl.remove();
+
       if (isFirebaseReady && notesRef && !id.startsWith('local_')) {
-        notesRef.child(id).remove();
+        notesRef.child(id).remove().catch((e) => console.error("削除エラー:", e));
       }
       runTextMining();
     }
 
-    // --- 3. 手書き描画（ペン・消しゴム・クリア） ---
+    // --- 3. 手書き描画 ---
     const penBtn = document.getElementById('penBtn');
     const eraserBtn = document.getElementById('eraserBtn');
     const selectClearBtn = document.getElementById('selectClearBtn');

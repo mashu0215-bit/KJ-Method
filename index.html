@@ -93,7 +93,7 @@
       top: 40px;
       left: 40px;
       display: none;
-      z-index: 20;
+      z-index: 15;
       cursor: move;
       border: 2px dashed rgba(71, 85, 105, 0.5);
       background: white;
@@ -120,7 +120,7 @@
       right: 6px;
       display: flex;
       justify-content: space-between;
-      z-index: 30;
+      z-index: 25;
       pointer-events: none;
     }
     .doc-btn-group {
@@ -158,7 +158,7 @@
       left: 0;
       width: 100%;
       height: 100%;
-      z-index: 25;
+      z-index: 20;
       display: none;
       cursor: crosshair;
       touch-action: none;
@@ -170,7 +170,7 @@
       display: none;
     }
 
-    /* 描画キャンバス */
+    /* 描画キャンバス：ペンON時は z-index: 90 で最前面へ */
     #drawing-canvas {
       position: absolute;
       top: 0;
@@ -182,7 +182,7 @@
       touch-action: none;
     }
     #drawing-canvas.active-mode {
-      z-index: 50 !important;
+      z-index: 90 !important;
       pointer-events: auto !important;
     }
 
@@ -192,11 +192,11 @@
       border: 2px dashed #ef4444;
       background: rgba(239, 68, 68, 0.15);
       display: none;
-      z-index: 55;
+      z-index: 95;
       pointer-events: none;
     }
 
-    /* 付箋スタイル */
+    /* 付箋スタイル（5色を厳格に指定、未指定時は黄色） */
     .sticky-note {
       position: absolute;
       width: 180px;
@@ -214,6 +214,7 @@
       overflow: hidden;
       font-family: inherit;
       touch-action: none;
+      background-color: #fff9b1; /* デフォルト黄色 */
     }
     .sticky-note textarea {
       flex: 1;
@@ -236,19 +237,19 @@
       border: none;
       color: #94a3b8;
       cursor: pointer;
-      font-size: 13px;
-      padding: 0;
+      font-size: 14px;
+      font-weight: bold;
+      padding: 0 4px;
       line-height: 1;
       touch-action: auto;
     }
     .sticky-note .del-btn:hover { color: #ef4444; }
 
-    /* 付箋カラー */
-    .color-pink   { background-color: #ffd1dc; }
-    .color-yellow { background-color: #fff9b1; }
-    .color-blue   { background-color: #cce5ff; }
-    .color-green  { background-color: #d9f99d; }
-    .color-white  { background-color: #ffffff; }
+    .sticky-note.color-pink   { background-color: #ffd1dc !important; }
+    .sticky-note.color-yellow { background-color: #fff9b1 !important; }
+    .sticky-note.color-blue   { background-color: #cce5ff !important; }
+    .sticky-note.color-green  { background-color: #d9f99d !important; }
+    .sticky-note.color-white  { background-color: #ffffff !important; }
 
     /* テキストマイニング集計 */
     #mining-panel {
@@ -258,7 +259,7 @@
       padding: 8px 16px;
       display: flex;
       flex-direction: column;
-      z-index: 60;
+      z-index: 100;
       flex-shrink: 0;
       touch-action: pan-y;
     }
@@ -334,10 +335,10 @@
       <button onclick="handleClearAll()" class="danger">全消去</button>
     </div>
 
-    <div class="room-badge" id="roomStatus">接続準備中...</div>
+    <div class="room-badge" id="roomStatus">接続中...</div>
   </div>
 
-  <!-- ボード領域 -->
+  <!-- メインボード -->
   <div id="board-container">
     <div id="doc-wrapper">
       <div class="doc-controls">
@@ -368,7 +369,7 @@
   </div>
 
   <script>
-    // --- 安全なFirebase初期化（エラーが起きてもローカル処理を止めない） ---
+    // --- Firebase初期化 ---
     let db = null;
     let notesRef = null, strokesRef = null, docRef = null;
     let isFirebaseReady = false;
@@ -398,7 +399,6 @@
       isFirebaseReady = true;
       roomStatusEl.textContent = `🟢 ルーム: ${roomId}`;
     } catch (e) {
-      console.warn("Firebase接続待機またはオフライン:", e);
       roomStatusEl.textContent = `🟡 ローカルモード`;
     }
 
@@ -412,9 +412,14 @@
     let highestZ = 35;
     let localNoteId = 0;
 
-    if (window.pdfjsLib) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+    // キャンバスの実サイズを正確に合わせる
+    function resizeCanvas() {
+      canvas.width = board.clientWidth || window.innerWidth;
+      canvas.height = board.clientHeight || (window.innerHeight - 144);
+      redrawAllStrokes();
     }
+    window.addEventListener('resize', resizeCanvas);
+    setTimeout(resizeCanvas, 100);
 
     function getPointerPos(e, targetEl = null) {
       const touch = (e.touches && e.touches.length > 0) ? e.touches[0] : ((e.changedTouches && e.changedTouches.length > 0) ? e.changedTouches[0] : e);
@@ -430,7 +435,7 @@
       return { clientX: touch.clientX, clientY: touch.clientY };
     }
 
-    // --- 1. 資料の読み込みと同期 ---
+    // --- 1. 資料の読み込み ---
     const fileInput = document.getElementById('fileInput');
     fileInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
@@ -453,7 +458,7 @@
             applyDocLocal({ src: src, left: 40, top: 40, width: 440, pinned: false });
             if (isFirebaseReady && docRef) docRef.set({ src: src, left: 40, top: 40, width: 440, pinned: false });
           } catch(err) {
-            console.error("PDF読み込み失敗:", err);
+            console.error(err);
           }
         };
         fileReader.readAsArrayBuffer(file);
@@ -487,7 +492,7 @@
     }
 
     function applyDocLocal(data) {
-      if (!data || !data.src) {
+      if (!data || !data.src || data.src.length < 50) {
         docWrapper.style.display = 'none';
         backgroundImg.src = '';
         return;
@@ -518,7 +523,7 @@
 
     function deleteDoc(e) {
       e.stopPropagation();
-      if (!confirm('共有中の資料を削除しますか？')) return;
+      if (!confirm('挿入した資料を削除しますか？')) return;
       applyDocLocal(null);
       if (isFirebaseReady && docRef) docRef.remove();
       fileInput.value = '';
@@ -668,9 +673,9 @@
       if (isFirebaseReady && docRef) docRef.update({ left: l, top: t, width: docWrapper.offsetWidth });
     }, () => isDocPinned || isCropping);
 
-    // --- 2. 付箋処理 ---
+    // --- 2. 付箋処理（色抜け・グレー化を完全防止） ---
     function handleAddNoteClick() {
-      const color = document.getElementById('noteColor').value;
+      const color = document.getElementById('noteColor').value || 'yellow';
       const data = {
         color: color,
         text: '',
@@ -706,7 +711,8 @@
         if (document.activeElement !== textarea && textarea.value !== val.text) {
           textarea.value = val.text || '';
         }
-        noteEl.className = `sticky-note color-${val.color}`;
+        const safeColor = val.color || 'yellow';
+        noteEl.className = `sticky-note color-${safeColor}`;
         noteEl.style.left = val.left + 'px';
         noteEl.style.top = val.top + 'px';
         if (val.width) noteEl.style.width = val.width + 'px';
@@ -724,17 +730,19 @@
     function renderNote(id, data) {
       if (document.getElementById('note-' + id)) return;
 
+      const safeColor = (data && data.color) ? data.color : 'yellow';
+
       const note = document.createElement('div');
       note.id = 'note-' + id;
-      note.className = `sticky-note color-${data.color}`;
-      note.style.left = (data.left || 500) + 'px';
-      note.style.top = (data.top || 60) + 'px';
-      if (data.width) note.style.width = data.width + 'px';
-      if (data.height) note.style.height = data.height + 'px';
+      note.className = `sticky-note color-${safeColor}`;
+      note.style.left = ((data && data.left) ? data.left : 500) + 'px';
+      note.style.top = ((data && data.top) ? data.top : 60) + 'px';
+      if (data && data.width) note.style.width = data.width + 'px';
+      if (data && data.height) note.style.height = data.height + 'px';
 
       note.innerHTML = `
         <button class="del-btn" onclick="deleteNote('${id}')">✕</button>
-        <textarea maxlength="100" placeholder="100字以内でコメントを入力...">${data.text || ''}</textarea>
+        <textarea maxlength="100" placeholder="100字以内でコメントを入力...">${(data && data.text) ? data.text : ''}</textarea>
       `;
 
       board.appendChild(note);
@@ -795,14 +803,6 @@
     let currentStrokePoints = [];
     let selStartX = 0, selStartY = 0;
     let localStrokes = [];
-
-    function resizeCanvas() {
-      canvas.width = board.clientWidth;
-      canvas.height = board.clientHeight;
-      redrawAllStrokes();
-    }
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
 
     function setMode(mode) {
       currentMode = (currentMode === mode) ? 'none' : mode;
@@ -971,7 +971,7 @@
       }
     }
 
-    // --- 4. テキストマイニング集計 ---
+    // --- 4. テキストマイニング集計（即時カウント） ---
     const stopWords = new Set([
       'こと','もの','よう','ため','そう','これ','それ','あれ','この','その','あの','どこ','だれ','なに',
       'する','ある','いる','なる','できる','思う','いう','見る','いく','くる','の','に','は','を','た',
@@ -981,9 +981,11 @@
     function runTextMining() {
       const textareas = document.querySelectorAll('.sticky-note textarea');
       let combinedText = '';
-      textareas.forEach(t => { combinedText += ' ' + t.value.trim(); });
+      textareas.forEach(t => { 
+        if (t.value) combinedText += ' ' + t.value.trim(); 
+      });
 
-      const regex = /([\u4e00-\u9faf]+[\u3040-\u309f]{1,2}[\u4e00-\u9faf]+)|([\u4e00-\u9faf]{2,})|([\u4e00-\u9faf])|([\u30a1-\u30f6]{2,})|([A-Za-z]{3,})/g;
+      const regex = /([\u4e00-\u9faf]+[\u3040-\u309f]{1,2}[\u4e00-\u9faf]+)|([\u4e00-\u9faf]{1,})|([\u30a1-\u30f6]{2,})|([A-Za-z]{3,})/g;
       const tokens = combinedText.match(regex) || [];
       const wordCounts = {};
 

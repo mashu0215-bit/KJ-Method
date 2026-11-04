@@ -22,7 +22,7 @@
       overflow: hidden;
       user-select: none;
       -webkit-user-select: none;
-      touch-action: none; /* タッチ操作時の意図しないスクロールを抑制 */
+      touch-action: none;
     }
 
     /* ツールバー */
@@ -68,7 +68,7 @@
       border-color: #ef4444;
     }
 
-    /* メイン領域 */
+    /* メイン作業領域 */
     #board-container {
       flex: 1;
       position: relative;
@@ -77,26 +77,25 @@
       touch-action: none;
     }
 
-    /* 移動・ピン留め・トリミングできる資料枠 */
+    /* PDF・資料枠 */
     #doc-wrapper {
       position: absolute;
       top: 40px;
       left: 40px;
       display: none;
-      z-index: 5;
-      cursor: grab;
-      border: 2px dashed rgba(71, 85, 105, 0.4);
+      z-index: 20; /* 描画キャンバスより手前で確実に掴める */
+      cursor: move;
+      border: 2px dashed rgba(71, 85, 105, 0.5);
       background: white;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.18);
       resize: both;
       overflow: hidden;
-      min-width: 150px;
-      min-height: 150px;
+      min-width: 160px;
+      min-height: 160px;
       max-width: 90%;
       max-height: 90%;
       touch-action: none;
     }
-    #doc-wrapper:active { cursor: grabbing; }
     #doc-wrapper.pinned {
       cursor: default;
       border: 2px solid transparent;
@@ -104,7 +103,6 @@
       resize: none;
     }
 
-    /* 資料上部の操作ボタンバー */
     .doc-controls {
       position: absolute;
       top: 6px;
@@ -112,7 +110,7 @@
       right: 6px;
       display: flex;
       justify-content: space-between;
-      z-index: 25;
+      z-index: 30;
       pointer-events: none;
     }
     .doc-btn-group {
@@ -144,14 +142,14 @@
       pointer-events: none;
     }
 
-    /* トリミング用オーバーレイ */
+    /* 切り抜きオーバーレイ */
     #crop-layer {
       position: absolute;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
-      z-index: 20;
+      z-index: 25;
       display: none;
       cursor: crosshair;
       touch-action: none;
@@ -163,7 +161,7 @@
       display: none;
     }
 
-    /* ペン描画キャンバス */
+    /* 描画キャンバス（描画モードOFF時はクリック・タッチを完全に透過） */
     #drawing-canvas {
       position: absolute;
       top: 0;
@@ -171,16 +169,21 @@
       width: 100%;
       height: 100%;
       z-index: 10;
+      pointer-events: none; /* 初期値は透過 */
       touch-action: none;
     }
+    #drawing-canvas.active-mode {
+      z-index: 40; /* ペンや消しゴム使用時は最前面にして描画 */
+      pointer-events: auto;
+    }
 
-    /* 範囲クリア用の点線枠 */
+    /* 範囲クリア用枠 */
     #selection-box {
       position: absolute;
       border: 2px dashed #ef4444;
       background: rgba(239, 68, 68, 0.15);
       display: none;
-      z-index: 15;
+      z-index: 45;
       pointer-events: none;
     }
 
@@ -193,9 +196,9 @@
       min-height: 60px;
       padding: 8px 10px;
       border-radius: 8px;
-      box-shadow: 2px 4px 8px rgba(0,0,0,0.15);
-      z-index: 30;
-      cursor: grab;
+      box-shadow: 2px 4px 10px rgba(0,0,0,0.18);
+      z-index: 30; /* 資料枠より前面 */
+      cursor: move;
       display: flex;
       flex-direction: column;
       resize: both;
@@ -203,7 +206,6 @@
       font-family: inherit;
       touch-action: none;
     }
-    .sticky-note:active { cursor: grabbing; }
     .sticky-note textarea {
       flex: 1;
       width: 100%;
@@ -286,14 +288,12 @@
 
   <!-- ツールバー -->
   <div id="toolbar">
-    <!-- 資料配置 -->
     <div class="tool-group">
       <label>資料:</label>
       <input type="file" id="fileInput" accept="image/*,.pdf">
       <button onclick="resetDocPosition()" title="初期位置・サイズに戻す">位置リセット</button>
     </div>
 
-    <!-- 付箋追加 -->
     <div class="tool-group">
       <label>付箋:</label>
       <select id="noteColor">
@@ -306,7 +306,6 @@
       <button onclick="addStickyNote()">＋ 付箋</button>
     </div>
 
-    <!-- ペン・描画操作 -->
     <div class="tool-group">
       <label>描画:</label>
       <button id="penBtn" onclick="setMode('pen')">ペン: OFF</button>
@@ -320,7 +319,6 @@
       </select>
     </div>
 
-    <!-- 消しゴム & 範囲クリア -->
     <div class="tool-group">
       <button id="eraserBtn" onclick="setMode('eraser')">消しゴム</button>
       <button id="selectClearBtn" onclick="setMode('selectClear')">範囲クリア</button>
@@ -330,6 +328,7 @@
 
   <!-- ボード領域 -->
   <div id="board-container">
+    <!-- 資料枠 -->
     <div id="doc-wrapper">
       <div class="doc-controls">
         <div class="doc-btn-group">
@@ -363,14 +362,16 @@
     const docWrapper = document.getElementById('doc-wrapper');
     const backgroundImg = document.getElementById('background-img');
     const pinBtn = document.getElementById('pinBtn');
+    const canvas = document.getElementById('drawing-canvas');
+    const ctx = canvas.getContext('2d');
     let isDocPinned = false;
 
-    // PDF.jsのWorker設定
+    // PDF.jsの設定
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
-    // --- 座標取得ヘルパー（マウス / タッチ両対応） ---
+    // 画面・タッチ座標取得
     function getPointerPos(e, targetEl = null) {
-      const touch = e.touches && e.touches.length > 0 ? e.touches[0] : (e.changedTouches ? e.changedTouches[0] : e);
+      const touch = (e.touches && e.touches.length > 0) ? e.touches[0] : ((e.changedTouches && e.changedTouches.length > 0) ? e.changedTouches[0] : e);
       if (targetEl) {
         const rect = targetEl.getBoundingClientRect();
         return {
@@ -383,7 +384,7 @@
       return { clientX: touch.clientX, clientY: touch.clientY };
     }
 
-    // --- 1. 資料の読み込み ---
+    // --- 1. 資料（画像・PDF）の読み込み ---
     const fileInput = document.getElementById('fileInput');
     fileInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
@@ -455,7 +456,7 @@
       }
     }
 
-    // --- トリミング機能（タッチ対応） ---
+    // --- トリミング機能 ---
     const cropLayer = document.getElementById('crop-layer');
     const cropBox = document.getElementById('crop-box');
     const cropToggleBtn = document.getElementById('cropToggleBtn');
@@ -537,29 +538,33 @@
       cropToggleBtn.style.background = 'rgba(30, 41, 59, 0.85)';
     }
 
-    // --- 汎用ドラッグ処理（マウス / タッチ両対応） ---
-    function makeElementDraggable(el, isLockedFn = () => false) {
+    // --- 汎用ドラッグ移動（付箋・資料兼用） ---
+    let highestZ = 35;
+    function makeDraggable(el, isLockedFn = () => false) {
       let isDragging = false;
       let startX, startY, initialLeft, initialTop;
 
-      function onDragStart(e) {
+      function onStart(e) {
         if (isLockedFn()) return;
-        const target = e.target.tagName.toLowerCase();
-        if (target === 'textarea' || target === 'button' || target === 'input') return;
+        const targetTag = e.target.tagName.toLowerCase();
+        if (targetTag === 'textarea' || targetTag === 'button' || targetTag === 'input') return;
 
         const pos = getPointerPos(e);
         const rect = el.getBoundingClientRect();
-        // 右下リサイズ近辺はドラッグ開始しない
-        if (pos.clientX > rect.right - 22 && pos.clientY > rect.bottom - 22) return;
+        // 右下リサイズつまみ（角26px四方）の操作時はドラッグしない
+        if (pos.clientX > rect.right - 26 && pos.clientY > rect.bottom - 26) return;
 
         isDragging = true;
         startX = pos.clientX;
         startY = pos.clientY;
         initialLeft = el.offsetLeft;
         initialTop = el.offsetTop;
+
+        highestZ++;
+        el.style.zIndex = highestZ; // 触った要素を最前面へ
       }
 
-      function onDragMove(e) {
+      function onMove(e) {
         if (!isDragging) return;
         if (e.cancelable) e.preventDefault();
         const pos = getPointerPos(e);
@@ -567,22 +572,22 @@
         el.style.top = `${initialTop + (pos.clientY - startY)}px`;
       }
 
-      function onDragEnd() {
+      function onEnd() {
         isDragging = false;
       }
 
-      el.addEventListener('mousedown', onDragStart);
-      window.addEventListener('mousemove', onDragMove);
-      window.addEventListener('mouseup', onDragEnd);
+      el.addEventListener('mousedown', onStart);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onEnd);
 
-      el.addEventListener('touchstart', onDragStart, { passive: false });
-      window.addEventListener('touchmove', onDragMove, { passive: false });
-      window.addEventListener('touchend', onDragEnd);
+      el.addEventListener('touchstart', onStart, { passive: false });
+      window.addEventListener('touchmove', onMove, { passive: false });
+      window.addEventListener('touchend', onEnd);
     }
 
-    makeElementDraggable(docWrapper, () => isDocPinned || isCropping);
+    makeDraggable(docWrapper, () => isDocPinned || isCropping);
 
-    // --- 2. 付箋の追加とドラッグ ---
+    // --- 2. 付箋の追加と移動 ---
     function addStickyNote(colorClass, text = '', left = 520, top = 60) {
       const color = colorClass || 'color-' + document.getElementById('noteColor').value;
       const note = document.createElement('div');
@@ -598,7 +603,7 @@
       board.appendChild(note);
       const textarea = note.querySelector('textarea');
       textarea.addEventListener('input', runTextMining);
-      makeElementDraggable(note);
+      makeDraggable(note);
       runTextMining();
     }
 
@@ -607,15 +612,13 @@
       runTextMining();
     }
 
-    // --- 3. 描画モード（ペン・消しゴム・範囲クリア / タッチ対応） ---
-    const canvas = document.getElementById('drawing-canvas');
-    const ctx = canvas.getContext('2d');
+    // --- 3. 描画モード（ペン・消しゴム・範囲クリア） ---
     const penBtn = document.getElementById('penBtn');
     const eraserBtn = document.getElementById('eraserBtn');
     const selectClearBtn = document.getElementById('selectClearBtn');
     const selectionBox = document.getElementById('selection-box');
 
-    let currentMode = 'none';
+    let currentMode = 'none'; // 'none' | 'pen' | 'eraser' | 'selectClear'
     let isDrawing = false;
     let selStartX = 0, selStartY = 0;
 
@@ -627,11 +630,7 @@
     resizeCanvas();
 
     function setMode(mode) {
-      if (currentMode === mode) {
-        currentMode = 'none';
-      } else {
-        currentMode = mode;
-      }
+      currentMode = (currentMode === mode) ? 'none' : mode;
 
       penBtn.classList.toggle('active', currentMode === 'pen');
       penBtn.textContent = (currentMode === 'pen') ? 'ペン: ON' : 'ペン: OFF';
@@ -639,12 +638,11 @@
       selectClearBtn.classList.toggle('active', currentMode === 'selectClear');
 
       if (currentMode !== 'none') {
-        canvas.style.pointerEvents = 'auto';
+        canvas.classList.add('active-mode'); // 描画時のみ最前面で受け付ける
       } else {
-        canvas.style.pointerEvents = 'none';
+        canvas.classList.remove('active-mode'); // 通常時は完全透過して付箋やPDFを操作可能に
       }
     }
-    canvas.style.pointerEvents = 'none';
 
     function startDrawing(e) {
       if (currentMode === 'none') return;
@@ -659,7 +657,7 @@
 
         if (currentMode === 'eraser') {
           ctx.globalCompositeOperation = 'destination-out';
-          ctx.lineWidth = 24; // 指でも消しやすい太さ
+          ctx.lineWidth = 26;
         } else {
           ctx.globalCompositeOperation = 'source-over';
           ctx.strokeStyle = document.getElementById('penColor').value;
@@ -721,12 +719,10 @@
       ctx.globalCompositeOperation = 'source-over';
     }
 
-    // マウスイベント
     canvas.addEventListener('mousedown', startDrawing);
     canvas.addEventListener('mousemove', moveDrawing);
     window.addEventListener('mouseup', stopDrawing);
 
-    // タッチイベント
     canvas.addEventListener('touchstart', startDrawing, { passive: false });
     canvas.addEventListener('touchmove', moveDrawing, { passive: false });
     window.addEventListener('touchend', stopDrawing);
@@ -782,3 +778,5 @@
   </script>
 </body>
 </html>
+
+

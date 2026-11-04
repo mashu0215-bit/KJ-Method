@@ -87,7 +87,7 @@
       touch-action: none;
     }
 
-    /* 資料枠 */
+    /* 資料枠：画像が無いときは絶対に表示させない */
     #doc-wrapper {
       position: absolute;
       top: 40px;
@@ -214,7 +214,7 @@
       overflow: hidden;
       font-family: inherit;
       touch-action: none;
-      background-color: #fff9b1; /* デフォルト黄色 */
+      background-color: #fff9b1; /* 基本色：黄色 */
     }
     .sticky-note textarea {
       flex: 1;
@@ -369,7 +369,6 @@
   </div>
 
   <script>
-    // --- Firebase初期化 ---
     let db = null;
     let notesRef = null, strokesRef = null, docRef = null;
     let isFirebaseReady = false;
@@ -412,7 +411,6 @@
     let highestZ = 35;
     let localNoteId = 0;
 
-    // キャンバスの実サイズを正確に合わせる
     function resizeCanvas() {
       canvas.width = board.clientWidth || window.innerWidth;
       canvas.height = board.clientHeight || (window.innerHeight - 144);
@@ -673,7 +671,7 @@
       if (isFirebaseReady && docRef) docRef.update({ left: l, top: t, width: docWrapper.offsetWidth });
     }, () => isDocPinned || isCropping);
 
-    // --- 2. 付箋処理（色抜け・グレー化を完全防止） ---
+    // --- 2. 付箋処理 ---
     function handleAddNoteClick() {
       const color = document.getElementById('noteColor').value || 'yellow';
       const data = {
@@ -971,7 +969,7 @@
       }
     }
 
-    // --- 4. テキストマイニング集計（即時カウント） ---
+    // --- 4. テキストマイニング集計 ---
     const stopWords = new Set([
       'こと','もの','よう','ため','そう','これ','それ','あれ','この','その','あの','どこ','だれ','なに',
       'する','ある','いる','なる','できる','思う','いう','見る','いく','くる','の','に','は','を','た',

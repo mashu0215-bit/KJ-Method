@@ -2,12 +2,17 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>シンプル共有ホワイトボード</title>
   <!-- PDF読み込み用ライブラリ PDF.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { 
+      box-sizing: border-box; 
+      margin: 0; 
+      padding: 0; 
+      -webkit-touch-callout: none;
+    }
     body {
       font-family: "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
       display: flex;
@@ -16,6 +21,8 @@
       background: #e2e8f0;
       overflow: hidden;
       user-select: none;
+      -webkit-user-select: none;
+      touch-action: none; /* タッチ操作時の意図しないスクロールを抑制 */
     }
 
     /* ツールバー */
@@ -30,6 +37,7 @@
       z-index: 100;
       flex-shrink: 0;
       overflow-x: auto;
+      touch-action: pan-x;
     }
     .tool-group {
       display: flex;
@@ -49,6 +57,7 @@
       cursor: pointer;
       font-size: 12px;
       white-space: nowrap;
+      touch-action: auto;
     }
     button.active {
       background: #2563eb !important;
@@ -65,6 +74,7 @@
       position: relative;
       overflow: hidden;
       background: #cbd5e1;
+      touch-action: none;
     }
 
     /* 移動・ピン留め・トリミングできる資料枠 */
@@ -84,6 +94,7 @@
       min-height: 150px;
       max-width: 90%;
       max-height: 90%;
+      touch-action: none;
     }
     #doc-wrapper:active { cursor: grabbing; }
     #doc-wrapper.pinned {
@@ -143,6 +154,7 @@
       z-index: 20;
       display: none;
       cursor: crosshair;
+      touch-action: none;
     }
     #crop-box {
       position: absolute;
@@ -159,6 +171,7 @@
       width: 100%;
       height: 100%;
       z-index: 10;
+      touch-action: none;
     }
 
     /* 範囲クリア用の点線枠 */
@@ -188,6 +201,7 @@
       resize: both;
       overflow: hidden;
       font-family: inherit;
+      touch-action: none;
     }
     .sticky-note:active { cursor: grabbing; }
     .sticky-note textarea {
@@ -202,6 +216,8 @@
       line-height: 1.4;
       color: #1e293b;
       user-select: text;
+      -webkit-user-select: text;
+      touch-action: auto;
     }
     .sticky-note .del-btn {
       align-self: flex-end;
@@ -212,6 +228,7 @@
       font-size: 13px;
       padding: 0;
       line-height: 1;
+      touch-action: auto;
     }
     .sticky-note .del-btn:hover { color: #ef4444; }
 
@@ -232,6 +249,7 @@
       flex-direction: column;
       z-index: 50;
       flex-shrink: 0;
+      touch-action: pan-y;
     }
     #mining-panel h4 {
       font-size: 13px;
@@ -243,6 +261,7 @@
       flex-wrap: wrap;
       gap: 8px;
       overflow-y: auto;
+      touch-action: pan-y;
     }
     .word-badge {
       background: #eff6ff;
@@ -301,7 +320,7 @@
       </select>
     </div>
 
-    <!-- 消しゴム & 範囲クリア機能 -->
+    <!-- 消しゴム & 範囲クリア -->
     <div class="tool-group">
       <button id="eraserBtn" onclick="setMode('eraser')">消しゴム</button>
       <button id="selectClearBtn" onclick="setMode('selectClear')">範囲クリア</button>
@@ -311,7 +330,6 @@
 
   <!-- ボード領域 -->
   <div id="board-container">
-    <!-- 資料枠 -->
     <div id="doc-wrapper">
       <div class="doc-controls">
         <div class="doc-btn-group">
@@ -323,15 +341,12 @@
         </div>
       </div>
       <img id="background-img" alt="">
-      <!-- トリミング枠 -->
       <div id="crop-layer">
         <div id="crop-box"></div>
       </div>
     </div>
 
-    <!-- 描画キャンバス -->
     <canvas id="drawing-canvas"></canvas>
-    <!-- 範囲クリア用四角枠 -->
     <div id="selection-box"></div>
   </div>
 
@@ -349,12 +364,26 @@
     const backgroundImg = document.getElementById('background-img');
     const pinBtn = document.getElementById('pinBtn');
     let isDocPinned = false;
-    let originalImageSrc = ''; // トリミング前の元データ
 
     // PDF.jsのWorker設定
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
-    // --- 1. 資料の読み込み（画像 & PDF対応） ---
+    // --- 座標取得ヘルパー（マウス / タッチ両対応） ---
+    function getPointerPos(e, targetEl = null) {
+      const touch = e.touches && e.touches.length > 0 ? e.touches[0] : (e.changedTouches ? e.changedTouches[0] : e);
+      if (targetEl) {
+        const rect = targetEl.getBoundingClientRect();
+        return {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+          x: touch.clientX - rect.left,
+          y: touch.clientY - rect.top
+        };
+      }
+      return { clientX: touch.clientX, clientY: touch.clientY };
+    }
+
+    // --- 1. 資料の読み込み ---
     const fileInput = document.getElementById('fileInput');
     fileInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
@@ -365,7 +394,7 @@
         fileReader.onload = async function() {
           const typedarray = new Uint8Array(this.result);
           const pdf = await pdfjsLib.getDocument(typedarray).promise;
-          const page = await pdf.getPage(1); // 1ページ目をレンダリング
+          const page = await pdf.getPage(1);
           const viewport = page.getViewport({ scale: 1.5 });
           const tempCanvas = document.createElement('canvas');
           const tempCtx = tempCanvas.getContext('2d');
@@ -383,7 +412,6 @@
     });
 
     function setupDoc(src) {
-      originalImageSrc = src;
       backgroundImg.src = src;
       docWrapper.style.display = 'block';
       docWrapper.style.left = '40px';
@@ -396,17 +424,14 @@
       pinBtn.textContent = '📌 ピン留め';
     }
 
-    // ③ 資料の削除機能
     function deleteDoc(e) {
       e.stopPropagation();
       if (!confirm('挿入した資料を削除しますか？')) return;
       docWrapper.style.display = 'none';
       backgroundImg.src = '';
-      originalImageSrc = '';
       fileInput.value = '';
     }
 
-    // ピン留め切り替え
     function togglePinDoc(e) {
       e.stopPropagation();
       isDocPinned = !isDocPinned;
@@ -430,7 +455,7 @@
       }
     }
 
-    // ④ 資料のトリミング（切り抜き）機能
+    // --- トリミング機能（タッチ対応） ---
     const cropLayer = document.getElementById('crop-layer');
     const cropBox = document.getElementById('crop-box');
     const cropToggleBtn = document.getElementById('cropToggleBtn');
@@ -449,39 +474,43 @@
       cropLayer.style.display = 'block';
     }
 
-    cropLayer.addEventListener('mousedown', (e) => {
-      const rect = cropLayer.getBoundingClientRect();
-      cropStartX = e.clientX - rect.left;
-      cropStartY = e.clientY - rect.top;
+    function onCropStart(e) {
+      const pos = getPointerPos(e, cropLayer);
+      cropStartX = pos.x;
+      cropStartY = pos.y;
       cropBox.style.left = cropStartX + 'px';
       cropBox.style.top = cropStartY + 'px';
       cropBox.style.width = '0px';
       cropBox.style.height = '0px';
       cropBox.style.display = 'block';
 
-      function onMouseMove(moveEvent) {
-        const curX = moveEvent.clientX - rect.left;
-        const curY = moveEvent.clientY - rect.top;
-        cropBox.style.left = Math.min(cropStartX, curX) + 'px';
-        cropBox.style.top = Math.min(cropStartY, curY) + 'px';
-        cropBox.style.width = Math.abs(curX - cropStartX) + 'px';
-        cropBox.style.height = Math.abs(curY - cropStartY) + 'px';
+      function onCropMove(moveEvent) {
+        const curPos = getPointerPos(moveEvent, cropLayer);
+        cropBox.style.left = Math.min(cropStartX, curPos.x) + 'px';
+        cropBox.style.top = Math.min(cropStartY, curPos.y) + 'px';
+        cropBox.style.width = Math.abs(curPos.x - cropStartX) + 'px';
+        cropBox.style.height = Math.abs(curPos.y - cropStartY) + 'px';
       }
 
-      function onMouseUp() {
-        window.removeEventListener('mousemove', onMouseMove);
-        window.removeEventListener('mouseup', onMouseUp);
+      function onCropEnd() {
+        window.removeEventListener('mousemove', onCropMove);
+        window.removeEventListener('mouseup', onCropEnd);
+        window.removeEventListener('touchmove', onCropMove);
+        window.removeEventListener('touchend', onCropEnd);
       }
 
-      window.addEventListener('mousemove', onMouseMove);
-      window.addEventListener('mouseup', onMouseUp);
-    });
+      window.addEventListener('mousemove', onCropMove);
+      window.addEventListener('mouseup', onCropEnd);
+      window.addEventListener('touchmove', onCropMove, { passive: false });
+      window.addEventListener('touchend', onCropEnd);
+    }
+    cropLayer.addEventListener('mousedown', onCropStart);
+    cropLayer.addEventListener('touchstart', onCropStart, { passive: false });
 
     function finishCrop() {
       const boxW = cropBox.offsetWidth;
       const boxH = cropBox.offsetHeight;
       if (boxW > 20 && boxH > 20) {
-        // 表示サイズと画像元解像度の比率を計算して切り抜く
         const scaleX = backgroundImg.naturalWidth / backgroundImg.clientWidth;
         const scaleY = backgroundImg.naturalHeight / backgroundImg.clientHeight;
 
@@ -498,7 +527,6 @@
           boxH * scaleY,
           0, 0, cropCanvas.width, cropCanvas.height
         );
-
         backgroundImg.src = cropCanvas.toDataURL();
       }
 
@@ -509,36 +537,52 @@
       cropToggleBtn.style.background = 'rgba(30, 41, 59, 0.85)';
     }
 
-    // 資料枠のドラッグ移動
-    makeElementDraggable(docWrapper, () => isDocPinned || isCropping);
-
+    // --- 汎用ドラッグ処理（マウス / タッチ両対応） ---
     function makeElementDraggable(el, isLockedFn = () => false) {
       let isDragging = false;
       let startX, startY, initialLeft, initialTop;
 
-      el.addEventListener('mousedown', (e) => {
+      function onDragStart(e) {
         if (isLockedFn()) return;
-        if (e.target.tagName.toLowerCase() === 'textarea' || e.target.tagName.toLowerCase() === 'button') return;
+        const target = e.target.tagName.toLowerCase();
+        if (target === 'textarea' || target === 'button' || target === 'input') return;
+
+        const pos = getPointerPos(e);
         const rect = el.getBoundingClientRect();
-        if (e.clientX > rect.right - 18 && e.clientY > rect.bottom - 18) return;
+        // 右下リサイズ近辺はドラッグ開始しない
+        if (pos.clientX > rect.right - 22 && pos.clientY > rect.bottom - 22) return;
 
         isDragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
+        startX = pos.clientX;
+        startY = pos.clientY;
         initialLeft = el.offsetLeft;
         initialTop = el.offsetTop;
-      });
+      }
 
-      window.addEventListener('mousemove', (e) => {
+      function onDragMove(e) {
         if (!isDragging) return;
-        el.style.left = `${initialLeft + (e.clientX - startX)}px`;
-        el.style.top = `${initialTop + (e.clientY - startY)}px`;
-      });
+        if (e.cancelable) e.preventDefault();
+        const pos = getPointerPos(e);
+        el.style.left = `${initialLeft + (pos.clientX - startX)}px`;
+        el.style.top = `${initialTop + (pos.clientY - startY)}px`;
+      }
 
-      window.addEventListener('mouseup', () => { isDragging = false; });
+      function onDragEnd() {
+        isDragging = false;
+      }
+
+      el.addEventListener('mousedown', onDragStart);
+      window.addEventListener('mousemove', onDragMove);
+      window.addEventListener('mouseup', onDragEnd);
+
+      el.addEventListener('touchstart', onDragStart, { passive: false });
+      window.addEventListener('touchmove', onDragMove, { passive: false });
+      window.addEventListener('touchend', onDragEnd);
     }
 
-    // --- 2. 付箋の追加と移動 ---
+    makeElementDraggable(docWrapper, () => isDocPinned || isCropping);
+
+    // --- 2. 付箋の追加とドラッグ ---
     function addStickyNote(colorClass, text = '', left = 520, top = 60) {
       const color = colorClass || 'color-' + document.getElementById('noteColor').value;
       const note = document.createElement('div');
@@ -563,7 +607,7 @@
       runTextMining();
     }
 
-    // --- 3. 描画モード（ペン・消しゴム・範囲クリア） ---
+    // --- 3. 描画モード（ペン・消しゴム・範囲クリア / タッチ対応） ---
     const canvas = document.getElementById('drawing-canvas');
     const ctx = canvas.getContext('2d');
     const penBtn = document.getElementById('penBtn');
@@ -571,7 +615,7 @@
     const selectClearBtn = document.getElementById('selectClearBtn');
     const selectionBox = document.getElementById('selection-box');
 
-    let currentMode = 'none'; // 'none' | 'pen' | 'eraser' | 'selectClear'
+    let currentMode = 'none';
     let isDrawing = false;
     let selStartX = 0, selStartY = 0;
 
@@ -584,7 +628,7 @@
 
     function setMode(mode) {
       if (currentMode === mode) {
-        currentMode = 'none'; // OFFにする
+        currentMode = 'none';
       } else {
         currentMode = mode;
       }
@@ -594,7 +638,7 @@
       eraserBtn.classList.toggle('active', currentMode === 'eraser');
       selectClearBtn.classList.toggle('active', currentMode === 'selectClear');
 
-      if (currentMode === 'pen' || currentMode === 'eraser' || currentMode === 'selectClear') {
+      if (currentMode !== 'none') {
         canvas.style.pointerEvents = 'auto';
       } else {
         canvas.style.pointerEvents = 'none';
@@ -602,21 +646,21 @@
     }
     canvas.style.pointerEvents = 'none';
 
-    // マウス押下時の処理
-    canvas.addEventListener('mousedown', (e) => {
+    function startDrawing(e) {
       if (currentMode === 'none') return;
+      if (e.cancelable) e.preventDefault();
+
+      const pos = getPointerPos(e, canvas);
 
       if (currentMode === 'pen' || currentMode === 'eraser') {
         isDrawing = true;
         ctx.beginPath();
-        ctx.moveTo(e.offsetX, e.offsetY);
+        ctx.moveTo(pos.x, pos.y);
 
         if (currentMode === 'eraser') {
-          // ① 消しゴム処理（描画を透過消去）
           ctx.globalCompositeOperation = 'destination-out';
-          ctx.lineWidth = 18; // 消しやすいように太め
+          ctx.lineWidth = 24; // 指でも消しやすい太さ
         } else {
-          // ペン処理
           ctx.globalCompositeOperation = 'source-over';
           ctx.strokeStyle = document.getElementById('penColor').value;
           ctx.lineWidth = parseInt(document.getElementById('penWidth').value, 10);
@@ -624,56 +668,68 @@
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
       } else if (currentMode === 'selectClear') {
-        // ② 描画の選択クリア（範囲指定開始）
         isDrawing = true;
-        selStartX = e.clientX;
-        selStartY = e.clientY;
+        const screenPos = getPointerPos(e);
+        selStartX = screenPos.clientX;
+        selStartY = screenPos.clientY;
         selectionBox.style.left = selStartX + 'px';
         selectionBox.style.top = selStartY + 'px';
         selectionBox.style.width = '0px';
         selectionBox.style.height = '0px';
         selectionBox.style.display = 'block';
       }
-    });
+    }
 
-    // マウス移動時
-    canvas.addEventListener('mousemove', (e) => {
+    function moveDrawing(e) {
       if (!isDrawing) return;
+      if (e.cancelable) e.preventDefault();
+
+      const pos = getPointerPos(e, canvas);
 
       if (currentMode === 'pen' || currentMode === 'eraser') {
-        ctx.lineTo(e.offsetX, e.offsetY);
+        ctx.lineTo(pos.x, pos.y);
         ctx.stroke();
       } else if (currentMode === 'selectClear') {
-        const curX = e.clientX;
-        const curY = e.clientY;
+        const screenPos = getPointerPos(e);
+        const curX = screenPos.clientX;
+        const curY = screenPos.clientY;
         selectionBox.style.left = Math.min(selStartX, curX) + 'px';
         selectionBox.style.top = Math.min(selStartY, curY) + 'px';
         selectionBox.style.width = Math.abs(curX - selStartX) + 'px';
         selectionBox.style.height = Math.abs(curY - selStartY) + 'px';
       }
-    });
+    }
 
-    // マウス離した時
-    window.addEventListener('mouseup', (e) => {
+    function stopDrawing(e) {
       if (!isDrawing) return;
       isDrawing = false;
 
       if (currentMode === 'selectClear') {
-        // 指定した四角範囲の線を一気に消去
+        const screenPos = getPointerPos(e);
         const rect = board.getBoundingClientRect();
-        const selLeft = Math.min(selStartX, e.clientX) - rect.left;
-        const selTop = Math.min(selStartY, e.clientY) - rect.top;
-        const selW = Math.abs(e.clientX - selStartX);
-        const selH = Math.abs(e.clientY - selStartY);
+        const selLeft = Math.min(selStartX, screenPos.clientX) - rect.left;
+        const selTop = Math.min(selStartY, screenPos.clientY) - rect.top;
+        const selW = Math.abs(screenPos.clientX - selStartX);
+        const selH = Math.abs(screenPos.clientY - selStartY);
 
         if (selW > 5 && selH > 5) {
           ctx.clearRect(selLeft, selTop, selW, selH);
         }
         selectionBox.style.display = 'none';
-        setMode('none'); // クリア後に通常モードに戻す
+        setMode('none');
       }
       ctx.globalCompositeOperation = 'source-over';
-    });
+    }
+
+    // マウスイベント
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousemove', moveDrawing);
+    window.addEventListener('mouseup', stopDrawing);
+
+    // タッチイベント
+    canvas.addEventListener('touchstart', startDrawing, { passive: false });
+    canvas.addEventListener('touchmove', moveDrawing, { passive: false });
+    window.addEventListener('touchend', stopDrawing);
 
     function clearCanvas() {
       if (confirm('描いた線をすべて消去しますか？')) {
@@ -726,4 +782,3 @@
   </script>
 </body>
 </html>
-

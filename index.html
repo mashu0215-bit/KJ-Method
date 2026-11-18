@@ -4,9 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>リアルタイム共有ホワイトボード</title>
-  <!-- PDF.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
-  <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <style>
@@ -31,12 +29,11 @@
     #name-modal-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(15, 23, 42, 0.75);
+      background: rgba(15, 23, 42, 0.78);
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 9999;
-      backdrop-filter: blur(2px);
     }
     .name-modal-card {
       background: #ffffff;
@@ -66,6 +63,8 @@
       margin-bottom: 16px;
       outline: none;
       text-align: center;
+      user-select: text;
+      -webkit-user-select: text;
     }
     #userNameInput:focus {
       border-color: #2563eb;
@@ -155,15 +154,13 @@
       color: #38bdf8;
     }
 
-    /* スクロール可能なビューポート */
+    /* スクロール表示枠 & 2倍キャンバス */
     #board-viewport {
       flex: 1;
       position: relative;
       overflow: auto;
       background: #94a3b8;
     }
-
-    /* 2倍サイズのホワイトボード本体 */
     #board-container {
       width: 2400px;
       height: 1600px;
@@ -196,7 +193,6 @@
       box-shadow: 0 2px 6px rgba(0,0,0,0.12);
       resize: none;
     }
-
     .doc-controls {
       position: absolute;
       top: 6px;
@@ -226,7 +222,6 @@
     .doc-controls button:hover { background: #2563eb; }
     .doc-controls button.is-pinned { background: #dc2626; }
     .doc-controls button.del-doc { background: rgba(220, 38, 38, 0.9); }
-
     .doc-item img {
       width: 100%;
       height: auto;
@@ -267,7 +262,6 @@
       z-index: 90 !important;
       pointer-events: auto !important;
     }
-
     #selection-box {
       position: absolute;
       border: 2px dashed #ef4444;
@@ -277,7 +271,7 @@
       pointer-events: none;
     }
 
-    /* 付箋スタイル（投稿者名ヘッダー付き） */
+    /* 付箋スタイル */
     .sticky-note {
       position: absolute;
       width: 190px;
@@ -348,7 +342,7 @@
     .sticky-note.color-green  { background-color: #d9f99d !important; }
     .sticky-note.color-white  { background-color: #ffffff !important; }
 
-    /* 下部テキストマイニング集計 */
+    /* テキストマイニング集計 */
     #mining-panel {
       height: 86px;
       background: #ffffff;
@@ -396,8 +390,8 @@
     <div class="name-modal-card">
       <h2>👋 ホワイトボードへようこそ</h2>
       <p>付箋に自動で表示されるお名前を入力してください</p>
-      <input type="text" id="userNameInput" placeholder="例: 山田 太郎" maxlength="20" autofocus>
-      <button id="enterBoardBtn" onclick="confirmUserName()">入室する</button>
+      <input type="text" id="userNameInput" placeholder="例: 山田 太郎" maxlength="20">
+      <button type="button" id="enterBoardBtn">入室する</button>
     </div>
   </div>
 
@@ -418,12 +412,12 @@
         <option value="green">薄い黄緑</option>
         <option value="white">白</option>
       </select>
-      <button onclick="handleAddNoteClick()">＋ 付箋</button>
+      <button type="button" onclick="handleAddNoteClick()">＋ 付箋</button>
     </div>
 
     <div class="tool-group">
       <label>描画:</label>
-      <button id="penBtn" onclick="setMode('pen')">ペン: OFF</button>
+      <button type="button" id="penBtn" onclick="setMode('pen')">ペン: OFF</button>
       <select id="penColor">
         <option value="#e53e3e">赤</option>
         <option value="#3182ce">青</option>
@@ -435,9 +429,9 @@
     </div>
 
     <div class="tool-group">
-      <button id="eraserBtn" onclick="setMode('eraser')">消しゴム</button>
-      <button id="selectClearBtn" onclick="setMode('selectClear')">範囲クリア</button>
-      <button onclick="handleClearAll()" class="danger">全消去</button>
+      <button type="button" id="eraserBtn" onclick="setMode('eraser')">消しゴム</button>
+      <button type="button" id="selectClearBtn" onclick="setMode('selectClear')">範囲クリア</button>
+      <button type="button" onclick="handleClearAll()" class="danger">全消去</button>
     </div>
 
     <div class="right-status">
@@ -446,7 +440,7 @@
     </div>
   </div>
 
-  <!-- スクロール表示枠 & 2倍サイズのホワイトボード -->
+  <!-- スクロール表示枠 & 2倍キャンバス -->
   <div id="board-viewport">
     <div id="board-container">
       <canvas id="drawing-canvas" width="2400" height="1600"></canvas>
@@ -463,15 +457,20 @@
   </div>
 
   <script>
-    // --- ユーザー名管理 ---
-    let currentUserName = localStorage.getItem('wb_user_name') || '';
+    // --- 1. ユーザー名入力＆入室処理（最優先で登録） ---
+    let currentUserName = '';
+    try {
+      currentUserName = localStorage.getItem('wb_user_name') || '';
+    } catch (e) {}
+
     const nameModal = document.getElementById('name-modal-overlay');
     const nameInput = document.getElementById('userNameInput');
+    const enterBtn = document.getElementById('enterBoardBtn');
     const userDisplayBadge = document.getElementById('userDisplayBadge');
 
     if (currentUserName) {
       nameInput.value = currentUserName;
-      userDisplayBadge.textContent = `👤 ${currentUserName}`;
+      userDisplayBadge.textContent = '👤 ' + currentUserName;
     }
 
     function confirmUserName() {
@@ -482,8 +481,10 @@
         return;
       }
       currentUserName = val;
-      localStorage.setItem('wb_user_name', currentUserName);
-      userDisplayBadge.textContent = `👤 ${currentUserName}`;
+      try {
+        localStorage.setItem('wb_user_name', currentUserName);
+      } catch (e) {}
+      userDisplayBadge.textContent = '👤 ' + currentUserName;
       nameModal.style.display = 'none';
     }
 
@@ -493,14 +494,19 @@
       nameInput.focus();
     }
 
-    nameInput.addEventListener('keydown', (e) => {
+    enterBtn.addEventListener('click', confirmUserName);
+    enterBtn.addEventListener('touchend', function(e) {
+      e.preventDefault();
+      confirmUserName();
+    });
+    nameInput.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') {
         e.preventDefault();
         confirmUserName();
       }
     });
 
-    // --- Firebase設定 ---
+    // --- 2. Firebase初期化 ---
     let db = null;
     let notesRef = null, strokesRef = null, docsRef = null;
     let isFirebaseReady = false;
@@ -519,18 +525,20 @@
         appId: "1:400013481217:web:fde9e0372a55949fcef700"
       };
 
-      if (!firebase.apps.length) {
+      if (window.firebase && !firebase.apps.length) {
         firebase.initializeApp(firebaseConfig);
       }
-      db = firebase.database();
-      const roomRef = db.ref('rooms/' + roomId);
-      notesRef = roomRef.child('notes');
-      strokesRef = roomRef.child('strokes');
-      docsRef = roomRef.child('docs');
-      isFirebaseReady = true;
-      roomStatusEl.textContent = `🟢 ルーム: ${roomId}`;
+      if (window.firebase) {
+        db = firebase.database();
+        const roomRef = db.ref('rooms/' + roomId);
+        notesRef = roomRef.child('notes');
+        strokesRef = roomRef.child('strokes');
+        docsRef = roomRef.child('docs');
+        isFirebaseReady = true;
+        roomStatusEl.textContent = '🟢 ルーム: ' + roomId;
+      }
     } catch (e) {
-      roomStatusEl.textContent = `🟡 ローカルモード`;
+      roomStatusEl.textContent = '🟡 ローカルモード';
     }
 
     const viewport = document.getElementById('board-viewport');
@@ -546,7 +554,7 @@
       pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
     }
 
-    function getPointerPos(e, targetEl = null) {
+    function getPointerPos(e, targetEl) {
       const touch = (e.touches && e.touches.length > 0) ? e.touches[0] : ((e.changedTouches && e.changedTouches.length > 0) ? e.changedTouches[0] : e);
       if (targetEl) {
         const rect = targetEl.getBoundingClientRect();
@@ -560,15 +568,15 @@
       return { clientX: touch.clientX, clientY: touch.clientY };
     }
 
-    // --- 1. 複数資料（最大4枚）＆ 拡大縮小機能 ---
+    // --- 3. 資料（最大4枚）＆ 拡大縮小 ---
     const fileInput = document.getElementById('fileInput');
-    fileInput.addEventListener('change', async (e) => {
+    fileInput.addEventListener('change', async function(e) {
       const file = e.target.files[0];
       if (!file) return;
 
       const currentDocCount = document.querySelectorAll('.doc-item').length;
       if (currentDocCount >= 4) {
-        alert('資料は最大4枚まで貼り付けられます。新しい資料を貼る場合は、不要な資料の「🗑️ 削除」を押してください。');
+        alert('資料は最大4枚まで貼り付けられます。');
         fileInput.value = '';
         return;
       }
@@ -591,15 +599,13 @@
             await page.render({ canvasContext: tempCtx, viewport: vp }).promise;
             const src = tempCanvas.toDataURL('image/jpeg', 0.7);
             addNewDocToSync({ src: src, left: baseLeft, top: baseTop, width: 420, pinned: false });
-          } catch(err) {
-            console.error(err);
-          }
+          } catch(err) {}
         };
         fileReader.readAsArrayBuffer(file);
       } else {
         const reader = new FileReader();
-        reader.onload = (event) => {
-          compressImage(event.target.result, 900, 0.7, (compressedSrc) => {
+        reader.onload = function(event) {
+          compressImage(event.target.result, 900, 0.7, function(compressedSrc) {
             addNewDocToSync({ src: compressedSrc, left: baseLeft, top: baseTop, width: 420, pinned: false });
           });
         };
@@ -610,7 +616,7 @@
 
     function compressImage(src, maxDim, quality, cb) {
       const img = new Image();
-      img.onload = () => {
+      img.onload = function() {
         let w = img.width, h = img.height;
         if (w > maxDim || h > maxDim) {
           if (w > h) { h = (h * maxDim) / w; w = maxDim; }
@@ -637,27 +643,24 @@
 
     function updateDocCounter() {
       const count = document.querySelectorAll('.doc-item').length;
-      docCounterEl.textContent = `${count} / 4枚`;
+      docCounterEl.textContent = count + ' / 4枚';
     }
 
     if (isFirebaseReady && docsRef) {
-      docsRef.on('child_added', (snapshot) => {
+      docsRef.on('child_added', function(snapshot) {
         renderDocItem(snapshot.key, snapshot.val());
         updateDocCounter();
       });
-
-      docsRef.on('child_changed', (snapshot) => {
+      docsRef.on('child_changed', function(snapshot) {
         const id = snapshot.key;
         const data = snapshot.val();
         const el = document.getElementById('doc-' + id);
         if (!el || !data) return;
-
         const img = el.querySelector('img');
         if (data.src && img.src !== data.src) img.src = data.src;
         el.style.left = (data.left || 40) + 'px';
         el.style.top = (data.top || 40) + 'px';
         if (data.width) el.style.width = data.width + 'px';
-
         const pinBtn = el.querySelector('.pin-btn');
         if (data.pinned) {
           el.classList.add('pinned');
@@ -671,8 +674,7 @@
           pinBtn.textContent = '📌 固定';
         }
       });
-
-      docsRef.on('child_removed', (snapshot) => {
+      docsRef.on('child_removed', function(snapshot) {
         const el = document.getElementById('doc-' + snapshot.key);
         if (el) el.remove();
         updateDocCounter();
@@ -692,57 +694,41 @@
       wrapper.style.top = (data.top || 40) + 'px';
       wrapper.style.width = (data.width || 420) + 'px';
 
-      wrapper.innerHTML = `
-        <div class="doc-controls">
-          <div class="doc-btn-group">
-            <button class="pin-btn ${data.pinned ? 'is-pinned' : ''}" onclick="toggleDocPin(event, '${id}')">${data.pinned ? '🔒 固定中' : '📌 固定'}</button>
-            <button onclick="zoomDoc(event, '${id}', 1.2)" title="拡大">🔍＋</button>
-            <button onclick="zoomDoc(event, '${id}', 0.8)" title="縮小">🔍－</button>
-            <button class="crop-btn" onclick="toggleDocCrop(event, '${id}')">✂️ 切り抜き</button>
-          </div>
-          <div class="doc-btn-group">
-            <button class="del-doc" onclick="deleteDocItem(event, '${id}')">🗑️ 削除</button>
-          </div>
-        </div>
-        <img src="${data.src}" alt="">
-        <div class="crop-layer">
-          <div class="crop-box"></div>
-        </div>
-      `;
+      wrapper.innerHTML = 
+        '<div class="doc-controls">' +
+          '<div class="doc-btn-group">' +
+            '<button type="button" class="pin-btn ' + (data.pinned ? 'is-pinned' : '') + '" onclick="toggleDocPin(event, \'' + id + '\')">' + (data.pinned ? '🔒 固定中' : '📌 固定') + '</button>' +
+            '<button type="button" onclick="zoomDoc(event, \'' + id + '\', 1.2)">🔍＋</button>' +
+            '<button type="button" onclick="zoomDoc(event, \'' + id + '\', 0.8)">🔍－</button>' +
+            '<button type="button" class="crop-btn" onclick="toggleDocCrop(event, \'' + id + '\')">✂️ 切り抜き</button>' +
+          '</div>' +
+          '<div class="doc-btn-group">' +
+            '<button type="button" class="del-doc" onclick="deleteDocItem(event, \'' + id + '\')">🗑️ 削除</button>' +
+          '</div>' +
+        '</div>' +
+        '<img src="' + data.src + '" alt="">' +
+        '<div class="crop-layer"><div class="crop-box"></div></div>';
 
       board.appendChild(wrapper);
-      setupDocCropEvents(wrapper, id);
+      setupDocCropEvents(wrapper);
 
-      makeElementDraggable(wrapper, (l, t) => {
-        if (isFirebaseReady && docsRef && !id.startsWith('local_')) {
+      makeElementDraggable(wrapper, function(l, t) {
+        if (isFirebaseReady && docsRef && id.indexOf('local_') !== 0) {
           docsRef.child(id).update({ left: l, top: t, width: wrapper.offsetWidth });
         }
-      }, () => wrapper.dataset.pinned === 'true' || wrapper.dataset.cropping === 'true');
-
-      if (window.ResizeObserver) {
-        let resizeTimer;
-        const ro = new ResizeObserver(() => {
-          clearTimeout(resizeTimer);
-          resizeTimer = setTimeout(() => {
-            if (isFirebaseReady && docsRef && !id.startsWith('local_')) {
-              docsRef.child(id).update({ width: wrapper.offsetWidth });
-            }
-          }, 250);
-        });
-        ro.observe(wrapper);
-      }
+      }, function() {
+        return wrapper.dataset.pinned === 'true' || wrapper.dataset.cropping === 'true';
+      });
     }
 
     function zoomDoc(e, id, factor) {
       e.stopPropagation();
       const el = document.getElementById('doc-' + id);
       if (!el) return;
-      const currentW = el.offsetWidth;
-      const newW = Math.max(160, Math.min(1800, Math.round(currentW * factor)));
+      const newW = Math.max(160, Math.min(1800, Math.round(el.offsetWidth * factor)));
       el.style.width = newW + 'px';
       el.style.height = 'auto';
-
-      if (isFirebaseReady && docsRef && !id.startsWith('local_')) {
+      if (isFirebaseReady && docsRef && id.indexOf('local_') !== 0) {
         docsRef.child(id).update({ width: newW });
       }
     }
@@ -757,8 +743,7 @@
       const btn = el.querySelector('.pin-btn');
       btn.classList.toggle('is-pinned', nextState);
       btn.textContent = nextState ? '🔒 固定中' : '📌 固定';
-
-      if (isFirebaseReady && docsRef && !id.startsWith('local_')) {
+      if (isFirebaseReady && docsRef && id.indexOf('local_') !== 0) {
         docsRef.child(id).update({ pinned: nextState });
       }
     }
@@ -769,8 +754,7 @@
       const el = document.getElementById('doc-' + id);
       if (el) el.remove();
       updateDocCounter();
-
-      if (isFirebaseReady && docsRef && !id.startsWith('local_')) {
+      if (isFirebaseReady && docsRef && id.indexOf('local_') !== 0) {
         docsRef.child(id).remove();
       }
     }
@@ -794,17 +778,10 @@
           cropCanvas.width = boxW * scaleX;
           cropCanvas.height = boxH * scaleY;
           const cCtx = cropCanvas.getContext('2d');
-          cCtx.drawImage(
-            img,
-            cropBox.offsetLeft * scaleX,
-            cropBox.offsetTop * scaleY,
-            boxW * scaleX,
-            boxH * scaleY,
-            0, 0, cropCanvas.width, cropCanvas.height
-          );
+          cCtx.drawImage(img, cropBox.offsetLeft * scaleX, cropBox.offsetTop * scaleY, boxW * scaleX, boxH * scaleY, 0, 0, cropCanvas.width, cropCanvas.height);
           const newSrc = cropCanvas.toDataURL('image/jpeg', 0.7);
           img.src = newSrc;
-          if (isFirebaseReady && docsRef && !id.startsWith('local_')) {
+          if (isFirebaseReady && docsRef && id.indexOf('local_') !== 0) {
             docsRef.child(id).update({ src: newSrc });
           }
         }
@@ -857,12 +834,12 @@
       cropLayer.addEventListener('touchstart', onStart, { passive: false });
     }
 
-    function makeElementDraggable(el, onEndSync = null, isLockedFn = () => false) {
+    function makeElementDraggable(el, onEndSync, isLockedFn) {
       let isDragging = false;
       let startX, startY, initialLeft, initialTop;
 
       function onStart(e) {
-        if (isLockedFn()) return;
+        if (isLockedFn && isLockedFn()) return;
         const targetTag = e.target.tagName.toLowerCase();
         if (targetTag === 'textarea' || targetTag === 'button' || targetTag === 'input') return;
 
@@ -884,8 +861,8 @@
         if (!isDragging) return;
         if (e.cancelable) e.preventDefault();
         const pos = getPointerPos(e);
-        el.style.left = `${Math.max(0, initialLeft + (pos.clientX - startX))}px`;
-        el.style.top = `${Math.max(0, initialTop + (pos.clientY - startY))}px`;
+        el.style.left = Math.max(0, initialLeft + (pos.clientX - startX)) + 'px';
+        el.style.top = Math.max(0, initialTop + (pos.clientY - startY)) + 'px';
       }
 
       function onEnd() {
@@ -897,13 +874,12 @@
       el.addEventListener('mousedown', onStart);
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onEnd);
-
       el.addEventListener('touchstart', onStart, { passive: false });
       window.addEventListener('touchmove', onMove, { passive: false });
       window.addEventListener('touchend', onEnd);
     }
 
-    // --- 2. 付箋処理（自動名前付与） ---
+    // --- 4. 付箋処理（自動名前付与） ---
     function handleAddNoteClick() {
       if (!currentUserName) {
         openNameModal();
@@ -915,7 +891,7 @@
 
       const data = {
         color: color,
-        author: currentUserName, // 作成者の名前を自動セット
+        author: currentUserName,
         text: '',
         left: leftPos,
         top: topPos,
@@ -933,12 +909,11 @@
     }
 
     if (isFirebaseReady && notesRef) {
-      notesRef.on('child_added', (snapshot) => {
+      notesRef.on('child_added', function(snapshot) {
         renderNote(snapshot.key, snapshot.val());
         runTextMining();
       });
-
-      notesRef.on('child_changed', (snapshot) => {
+      notesRef.on('child_changed', function(snapshot) {
         const id = snapshot.key;
         const val = snapshot.val();
         const noteEl = document.getElementById('note-' + id);
@@ -950,18 +925,17 @@
         }
         const authorSpan = noteEl.querySelector('.note-author');
         if (authorSpan && val.author) {
-          authorSpan.textContent = `👤 ${val.author}`;
+          authorSpan.textContent = '👤 ' + val.author;
         }
         const safeColor = val.color || 'yellow';
-        noteEl.className = `sticky-note color-${safeColor}`;
+        noteEl.className = 'sticky-note color-' + safeColor;
         noteEl.style.left = val.left + 'px';
         noteEl.style.top = val.top + 'px';
         if (val.width) noteEl.style.width = val.width + 'px';
         if (val.height) noteEl.style.height = val.height + 'px';
         runTextMining();
       });
-
-      notesRef.on('child_removed', (snapshot) => {
+      notesRef.on('child_removed', function(snapshot) {
         const noteEl = document.getElementById('note-' + snapshot.key);
         if (noteEl) noteEl.remove();
         runTextMining();
@@ -969,9 +943,12 @@
     }
 
     function escapeHtml(str) {
-      return String(str).replace(/[&<>"']/g, (m) => ({
-        '&': '&', '<': '<', '>': '>', '"': '"', "'": '''
-      }[m]));
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     }
 
     function renderNote(id, data) {
@@ -982,36 +959,35 @@
 
       const note = document.createElement('div');
       note.id = 'note-' + id;
-      note.className = `sticky-note color-${safeColor}`;
+      note.className = 'sticky-note color-' + safeColor;
       note.style.left = ((data && data.left) ? data.left : 300) + 'px';
       note.style.top = ((data && data.top) ? data.top : 80) + 'px';
       if (data && data.width) note.style.width = data.width + 'px';
       if (data && data.height) note.style.height = data.height + 'px';
 
-      note.innerHTML = `
-        <div class="note-header">
-          <span class="note-author">👤 ${authorName}</span>
-          <button class="del-btn" onclick="deleteNote('${id}')">✕</button>
-        </div>
-        <textarea maxlength="100" placeholder="100字以内でコメントを入力...">${(data && data.text) ? escapeHtml(data.text) : ''}</textarea>
-      `;
+      note.innerHTML = 
+        '<div class="note-header">' +
+          '<span class="note-author">👤 ' + authorName + '</span>' +
+          '<button type="button" class="del-btn" onclick="deleteNote(\'' + id + '\')">✕</button>' +
+        '</div>' +
+        '<textarea maxlength="100" placeholder="100字以内でコメントを入力...">' + ((data && data.text) ? escapeHtml(data.text) : '') + '</textarea>';
 
       board.appendChild(note);
 
       const textarea = note.querySelector('textarea');
       let inputTimer;
-      textarea.addEventListener('input', () => {
+      textarea.addEventListener('input', function() {
         runTextMining();
         clearTimeout(inputTimer);
-        inputTimer = setTimeout(() => {
-          if (isFirebaseReady && notesRef && !id.startsWith('local_')) {
+        inputTimer = setTimeout(function() {
+          if (isFirebaseReady && notesRef && id.indexOf('local_') !== 0) {
             notesRef.child(id).update({ text: textarea.value });
           }
         }, 200);
       });
 
-      makeElementDraggable(note, (l, t) => {
-        if (isFirebaseReady && notesRef && !id.startsWith('local_')) {
+      makeElementDraggable(note, function(l, t) {
+        if (isFirebaseReady && notesRef && id.indexOf('local_') !== 0) {
           notesRef.child(id).update({
             left: l,
             top: t,
@@ -1020,31 +996,18 @@
           });
         }
       });
-
-      if (window.ResizeObserver) {
-        const resizeObserver = new ResizeObserver(() => {
-          if (isFirebaseReady && notesRef && !id.startsWith('local_')) {
-            notesRef.child(id).update({
-              width: note.offsetWidth,
-              height: note.offsetHeight
-            });
-          }
-        });
-        resizeObserver.observe(note);
-      }
     }
 
     function deleteNote(id) {
       const noteEl = document.getElementById('note-' + id);
       if (noteEl) noteEl.remove();
-
-      if (isFirebaseReady && notesRef && !id.startsWith('local_')) {
-        notesRef.child(id).remove().catch((e) => console.error(e));
+      if (isFirebaseReady && notesRef && id.indexOf('local_') !== 0) {
+        notesRef.child(id).remove();
       }
       runTextMining();
     }
 
-    // --- 3. 手書き描画 ---
+    // --- 5. 手書き描画 ---
     const penBtn = document.getElementById('penBtn');
     const eraserBtn = document.getElementById('eraserBtn');
     const selectClearBtn = document.getElementById('selectClearBtn');
@@ -1058,7 +1021,6 @@
 
     function setMode(mode) {
       currentMode = (currentMode === mode) ? 'none' : mode;
-
       penBtn.classList.toggle('active', currentMode === 'pen');
       penBtn.textContent = (currentMode === 'pen') ? 'ペン: ON' : 'ペン: OFF';
       eraserBtn.classList.toggle('active', currentMode === 'eraser');
@@ -1167,14 +1129,13 @@
     canvas.addEventListener('mousedown', startDrawing);
     canvas.addEventListener('mousemove', moveDrawing);
     window.addEventListener('mouseup', stopDrawing);
-
     canvas.addEventListener('touchstart', startDrawing, { passive: false });
     canvas.addEventListener('touchmove', moveDrawing, { passive: false });
     window.addEventListener('touchend', stopDrawing);
 
     let allStrokes = {};
     if (isFirebaseReady && strokesRef) {
-      strokesRef.on('value', (snapshot) => {
+      strokesRef.on('value', function(snapshot) {
         allStrokes = snapshot.val() || {};
         redrawAllStrokes();
       });
@@ -1184,7 +1145,7 @@
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const strokesToDraw = (isFirebaseReady && Object.keys(allStrokes).length > 0) ? Object.values(allStrokes) : localStrokes;
 
-      strokesToDraw.forEach(stroke => {
+      strokesToDraw.forEach(function(stroke) {
         if (!stroke) return;
         if (stroke.type === 'clearArea' && stroke.area) {
           ctx.clearRect(stroke.area.left, stroke.area.top, stroke.area.width, stroke.area.height);
@@ -1220,7 +1181,7 @@
       }
     }
 
-    // --- 4. テキストマイニング集計 ---
+    // --- 6. テキストマイニング集計 ---
     const stopWords = new Set([
       'こと','もの','よう','ため','そう','これ','それ','あれ','この','その','あの','どこ','だれ','なに',
       'する','ある','いる','なる','できる','思う','いう','見る','いく','くる','の','に','は','を','た',
@@ -1230,7 +1191,7 @@
     function runTextMining() {
       const textareas = document.querySelectorAll('.sticky-note textarea');
       let combinedText = '';
-      textareas.forEach(t => { 
+      textareas.forEach(function(t) { 
         if (t.value) combinedText += ' ' + t.value.trim(); 
       });
 
@@ -1238,13 +1199,13 @@
       const tokens = combinedText.match(regex) || [];
       const wordCounts = {};
 
-      tokens.forEach(w => {
+      tokens.forEach(function(w) {
         if (!stopWords.has(w) && w.length > 0) {
           wordCounts[w] = (wordCounts[w] || 0) + 1;
         }
       });
 
-      const sorted = Object.entries(wordCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      const sorted = Object.entries(wordCounts).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 8);
       const container = document.getElementById('word-tags');
       container.innerHTML = '';
 
@@ -1253,17 +1214,15 @@
         return;
       }
 
-      sorted.forEach(([word, count]) => {
+      sorted.forEach(function(item) {
         const badge = document.createElement('div');
         badge.className = 'word-badge';
-        badge.innerHTML = `${word} <span>${count}</span>`;
+        badge.innerHTML = item[0] + ' <span>' + item[1] + '</span>';
         container.appendChild(badge);
       });
     }
 
-    window.addEventListener('DOMContentLoaded', () => {
-      runTextMining();
-    });
+    window.addEventListener('DOMContentLoaded', runTextMining);
   </script>
 </body>
 </html>

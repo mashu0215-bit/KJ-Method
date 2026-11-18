@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>シンプル共有ホワイトボード</title>
+  <title>リアルタイム共有ホワイトボード</title>
   <!-- PDF.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <!-- Firebase SDK -->
@@ -25,9 +25,67 @@
       overflow: hidden;
       user-select: none;
       -webkit-user-select: none;
-      touch-action: none;
     }
 
+    /* 名前入力モーダル */
+    #name-modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.75);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      backdrop-filter: blur(2px);
+    }
+    .name-modal-card {
+      background: #ffffff;
+      padding: 28px 32px;
+      border-radius: 14px;
+      width: 90%;
+      max-width: 380px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+      text-align: center;
+    }
+    .name-modal-card h2 {
+      font-size: 18px;
+      color: #1e293b;
+      margin-bottom: 8px;
+    }
+    .name-modal-card p {
+      font-size: 13px;
+      color: #64748b;
+      margin-bottom: 18px;
+    }
+    #userNameInput {
+      width: 100%;
+      padding: 12px 14px;
+      font-size: 16px;
+      border: 2px solid #cbd5e1;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      outline: none;
+      text-align: center;
+    }
+    #userNameInput:focus {
+      border-color: #2563eb;
+    }
+    #enterBoardBtn {
+      width: 100%;
+      padding: 12px;
+      font-size: 15px;
+      font-weight: bold;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #enterBoardBtn:hover {
+      background: #1d4ed8;
+    }
+
+    /* ツールバー */
     #toolbar {
       height: 54px;
       background: #1e293b;
@@ -39,7 +97,6 @@
       z-index: 100;
       flex-shrink: 0;
       overflow-x: auto;
-      touch-action: pan-x;
     }
     .tool-group {
       display: flex;
@@ -59,7 +116,6 @@
       cursor: pointer;
       font-size: 12px;
       white-space: nowrap;
-      touch-action: auto;
     }
     button.active {
       background: #2563eb !important;
@@ -69,44 +125,75 @@
       background: #dc2626;
       border-color: #ef4444;
     }
+    .doc-counter {
+      font-size: 12px;
+      color: #fde047;
+      font-weight: bold;
+      white-space: nowrap;
+    }
+    .right-status {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+    .user-badge {
+      font-size: 12px;
+      background: #0f172a;
+      border: 1px solid #475569;
+      padding: 4px 10px;
+      border-radius: 16px;
+      color: #f8fafc;
+      cursor: pointer;
+    }
+    .user-badge:hover {
+      border-color: #38bdf8;
+    }
     .room-badge {
       font-size: 11px;
       color: #38bdf8;
-      margin-left: auto;
-      white-space: nowrap;
-      padding-left: 8px;
     }
 
-    #board-container {
+    /* スクロール可能なビューポート */
+    #board-viewport {
       flex: 1;
       position: relative;
-      overflow: hidden;
-      background: #cbd5e1;
+      overflow: auto;
+      background: #94a3b8;
+    }
+
+    /* 2倍サイズのホワイトボード本体 */
+    #board-container {
+      width: 2400px;
+      height: 1600px;
+      position: relative;
+      background-color: #cbd5e1;
+      background-image: 
+        linear-gradient(rgba(255,255,255,0.25) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.25) 1px, transparent 1px);
+      background-size: 40px 40px;
       touch-action: none;
     }
 
-    #doc-wrapper {
+    /* 資料枠 */
+    .doc-item {
       position: absolute;
-      top: 40px;
-      left: 40px;
-      display: none;
       z-index: 15;
       cursor: move;
-      border: 2px dashed rgba(71, 85, 105, 0.5);
+      border: 2px dashed rgba(71, 85, 105, 0.6);
       background: white;
       box-shadow: 0 4px 12px rgba(0,0,0,0.18);
       resize: both;
       overflow: hidden;
       min-width: 160px;
-      min-height: 160px;
-      max-width: 90%;
-      max-height: 90%;
+      min-height: 120px;
       touch-action: none;
     }
-    #doc-wrapper.pinned {
+    .doc-item.pinned {
       cursor: default;
       border: 2px solid transparent;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.12);
       resize: none;
     }
 
@@ -117,6 +204,8 @@
       right: 6px;
       display: flex;
       justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 4px;
       z-index: 25;
       pointer-events: none;
     }
@@ -126,26 +215,26 @@
       pointer-events: auto;
     }
     .doc-controls button {
-      background: rgba(30, 41, 59, 0.85);
+      background: rgba(30, 41, 59, 0.88);
       color: #fff;
       border: none;
-      padding: 4px 8px;
+      padding: 4px 7px;
       border-radius: 4px;
       font-size: 11px;
       cursor: pointer;
     }
+    .doc-controls button:hover { background: #2563eb; }
     .doc-controls button.is-pinned { background: #dc2626; }
-    .doc-controls button.del-doc { background: rgba(220, 38, 38, 0.85); }
+    .doc-controls button.del-doc { background: rgba(220, 38, 38, 0.9); }
 
-    #background-img {
+    .doc-item img {
       width: 100%;
-      height: 100%;
-      object-fit: contain;
+      height: auto;
       display: block;
       pointer-events: none;
     }
 
-    #crop-layer {
+    .crop-layer {
       position: absolute;
       top: 0;
       left: 0;
@@ -156,19 +245,20 @@
       cursor: crosshair;
       touch-action: none;
     }
-    #crop-box {
+    .crop-box {
       position: absolute;
       border: 2px dashed #2563eb;
-      background: rgba(37, 99, 235, 0.15);
+      background: rgba(37, 99, 235, 0.18);
       display: none;
     }
 
+    /* 描画キャンバス */
     #drawing-canvas {
       position: absolute;
       top: 0;
       left: 0;
-      width: 100%;
-      height: 100%;
+      width: 2400px;
+      height: 1600px;
       z-index: 10;
       pointer-events: none;
       touch-action: none;
@@ -187,13 +277,14 @@
       pointer-events: none;
     }
 
+    /* 付箋スタイル（投稿者名ヘッダー付き） */
     .sticky-note {
       position: absolute;
-      width: 180px;
-      min-width: 120px;
-      height: 100px;
-      min-height: 60px;
-      padding: 8px 10px;
+      width: 190px;
+      min-width: 130px;
+      height: 110px;
+      min-height: 70px;
+      padding: 6px 10px 8px 10px;
       border-radius: 8px;
       box-shadow: 2px 4px 10px rgba(0,0,0,0.18);
       z-index: 30;
@@ -206,6 +297,35 @@
       touch-action: none;
       background-color: #fff9b1;
     }
+    .note-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+      padding-bottom: 2px;
+    }
+    .note-author {
+      font-size: 11px;
+      font-weight: bold;
+      color: #475569;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 135px;
+    }
+    .sticky-note .del-btn {
+      background: none;
+      border: none;
+      color: #64748b;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: bold;
+      padding: 0 2px;
+      line-height: 1;
+      touch-action: auto;
+    }
+    .sticky-note .del-btn:hover { color: #ef4444; }
     .sticky-note textarea {
       flex: 1;
       width: 100%;
@@ -221,19 +341,6 @@
       -webkit-user-select: text;
       touch-action: auto;
     }
-    .sticky-note .del-btn {
-      align-self: flex-end;
-      background: none;
-      border: none;
-      color: #94a3b8;
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: bold;
-      padding: 0 4px;
-      line-height: 1;
-      touch-action: auto;
-    }
-    .sticky-note .del-btn:hover { color: #ef4444; }
 
     .sticky-note.color-pink   { background-color: #ffd1dc !important; }
     .sticky-note.color-yellow { background-color: #fff9b1 !important; }
@@ -241,8 +348,9 @@
     .sticky-note.color-green  { background-color: #d9f99d !important; }
     .sticky-note.color-white  { background-color: #ffffff !important; }
 
+    /* 下部テキストマイニング集計 */
     #mining-panel {
-      height: 90px;
+      height: 86px;
       background: #ffffff;
       border-top: 2px solid #cbd5e1;
       padding: 8px 16px;
@@ -250,7 +358,6 @@
       flex-direction: column;
       z-index: 100;
       flex-shrink: 0;
-      touch-action: pan-y;
     }
     #mining-panel h4 {
       font-size: 13px;
@@ -262,7 +369,6 @@
       flex-wrap: wrap;
       gap: 8px;
       overflow-y: auto;
-      touch-action: pan-y;
     }
     .word-badge {
       background: #eff6ff;
@@ -285,11 +391,22 @@
 </head>
 <body>
 
+  <!-- 入室時お名前入力画面 -->
+  <div id="name-modal-overlay">
+    <div class="name-modal-card">
+      <h2>👋 ホワイトボードへようこそ</h2>
+      <p>付箋に自動で表示されるお名前を入力してください</p>
+      <input type="text" id="userNameInput" placeholder="例: 山田 太郎" maxlength="20" autofocus>
+      <button id="enterBoardBtn" onclick="confirmUserName()">入室する</button>
+    </div>
+  </div>
+
+  <!-- ツールバー -->
   <div id="toolbar">
     <div class="tool-group">
-      <label>資料:</label>
+      <label>資料(最大4枚):</label>
       <input type="file" id="fileInput" accept="image/*,.pdf">
-      <button onclick="resetDocPosition()" title="初期位置・サイズに戻す">位置リセット</button>
+      <span class="doc-counter" id="docCounter">0 / 4枚</span>
     </div>
 
     <div class="tool-group">
@@ -323,30 +440,21 @@
       <button onclick="handleClearAll()" class="danger">全消去</button>
     </div>
 
-    <div class="room-badge" id="roomStatus">接続中...</div>
-  </div>
-
-  <div id="board-container">
-    <div id="doc-wrapper">
-      <div class="doc-controls">
-        <div class="doc-btn-group">
-          <button id="pinBtn" onclick="togglePinDoc(event)">📌 ピン留め</button>
-          <button id="cropToggleBtn" onclick="startCrop(event)">✂️ 切り抜き</button>
-        </div>
-        <div class="doc-btn-group">
-          <button class="del-doc" onclick="deleteDoc(event)">🗑️ 削除</button>
-        </div>
-      </div>
-      <img id="background-img" alt="">
-      <div id="crop-layer">
-        <div id="crop-box"></div>
-      </div>
+    <div class="right-status">
+      <span class="user-badge" id="userDisplayBadge" onclick="openNameModal()" title="クリックして名前を変更">👤 未設定</span>
+      <span class="room-badge" id="roomStatus">接続中...</span>
     </div>
-
-    <canvas id="drawing-canvas"></canvas>
-    <div id="selection-box"></div>
   </div>
 
+  <!-- スクロール表示枠 & 2倍サイズのホワイトボード -->
+  <div id="board-viewport">
+    <div id="board-container">
+      <canvas id="drawing-canvas" width="2400" height="1600"></canvas>
+      <div id="selection-box"></div>
+    </div>
+  </div>
+
+  <!-- 下部テキストマイニング -->
   <div id="mining-panel">
     <h4>📊 みんなのコメント頻出キーワード（自動集計）</h4>
     <div id="word-tags">
@@ -355,8 +463,46 @@
   </div>
 
   <script>
+    // --- ユーザー名管理 ---
+    let currentUserName = localStorage.getItem('wb_user_name') || '';
+    const nameModal = document.getElementById('name-modal-overlay');
+    const nameInput = document.getElementById('userNameInput');
+    const userDisplayBadge = document.getElementById('userDisplayBadge');
+
+    if (currentUserName) {
+      nameInput.value = currentUserName;
+      userDisplayBadge.textContent = `👤 ${currentUserName}`;
+    }
+
+    function confirmUserName() {
+      const val = nameInput.value.trim();
+      if (!val) {
+        alert('お名前を入力してください！');
+        nameInput.focus();
+        return;
+      }
+      currentUserName = val;
+      localStorage.setItem('wb_user_name', currentUserName);
+      userDisplayBadge.textContent = `👤 ${currentUserName}`;
+      nameModal.style.display = 'none';
+    }
+
+    function openNameModal() {
+      nameInput.value = currentUserName;
+      nameModal.style.display = 'flex';
+      nameInput.focus();
+    }
+
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        confirmUserName();
+      }
+    });
+
+    // --- Firebase設定 ---
     let db = null;
-    let notesRef = null, strokesRef = null, docRef = null;
+    let notesRef = null, strokesRef = null, docsRef = null;
     let isFirebaseReady = false;
 
     const roomId = (window.location.hash.substring(1) || 'main').replace(/[.#$\[\]]/g, '_');
@@ -380,30 +526,25 @@
       const roomRef = db.ref('rooms/' + roomId);
       notesRef = roomRef.child('notes');
       strokesRef = roomRef.child('strokes');
-      docRef = roomRef.child('doc');
+      docsRef = roomRef.child('docs');
       isFirebaseReady = true;
       roomStatusEl.textContent = `🟢 ルーム: ${roomId}`;
     } catch (e) {
       roomStatusEl.textContent = `🟡 ローカルモード`;
     }
 
+    const viewport = document.getElementById('board-viewport');
     const board = document.getElementById('board-container');
-    const docWrapper = document.getElementById('doc-wrapper');
-    const backgroundImg = document.getElementById('background-img');
-    const pinBtn = document.getElementById('pinBtn');
     const canvas = document.getElementById('drawing-canvas');
     const ctx = canvas.getContext('2d');
-    let isDocPinned = false;
+    const docCounterEl = document.getElementById('docCounter');
     let highestZ = 35;
     let localNoteId = 0;
+    let localDocId = 0;
 
-    function resizeCanvas() {
-      canvas.width = board.clientWidth || window.innerWidth;
-      canvas.height = board.clientHeight || (window.innerHeight - 144);
-      redrawAllStrokes();
+    if (window.pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
     }
-    window.addEventListener('resize', resizeCanvas);
-    setTimeout(resizeCanvas, 100);
 
     function getPointerPos(e, targetEl = null) {
       const touch = (e.touches && e.touches.length > 0) ? e.touches[0] : ((e.changedTouches && e.changedTouches.length > 0) ? e.changedTouches[0] : e);
@@ -419,10 +560,21 @@
       return { clientX: touch.clientX, clientY: touch.clientY };
     }
 
+    // --- 1. 複数資料（最大4枚）＆ 拡大縮小機能 ---
     const fileInput = document.getElementById('fileInput');
     fileInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
+
+      const currentDocCount = document.querySelectorAll('.doc-item').length;
+      if (currentDocCount >= 4) {
+        alert('資料は最大4枚まで貼り付けられます。新しい資料を貼る場合は、不要な資料の「🗑️ 削除」を押してください。');
+        fileInput.value = '';
+        return;
+      }
+
+      const baseLeft = viewport.scrollLeft + 40 + (currentDocCount * 35);
+      const baseTop = viewport.scrollTop + 40 + (currentDocCount * 35);
 
       if (file.type === 'application/pdf' && window.pdfjsLib) {
         const fileReader = new FileReader();
@@ -431,15 +583,14 @@
             const typedarray = new Uint8Array(this.result);
             const pdf = await pdfjsLib.getDocument(typedarray).promise;
             const page = await pdf.getPage(1);
-            const viewport = page.getViewport({ scale: 1.2 });
+            const vp = page.getViewport({ scale: 1.2 });
             const tempCanvas = document.createElement('canvas');
             const tempCtx = tempCanvas.getContext('2d');
-            tempCanvas.width = viewport.width;
-            tempCanvas.height = viewport.height;
-            await page.render({ canvasContext: tempCtx, viewport: viewport }).promise;
+            tempCanvas.width = vp.width;
+            tempCanvas.height = vp.height;
+            await page.render({ canvasContext: tempCtx, viewport: vp }).promise;
             const src = tempCanvas.toDataURL('image/jpeg', 0.7);
-            applyDocLocal({ src: src, left: 40, top: 40, width: 440, pinned: false });
-            if (isFirebaseReady && docRef) docRef.set({ src: src, left: 40, top: 40, width: 440, pinned: false });
+            addNewDocToSync({ src: src, left: baseLeft, top: baseTop, width: 420, pinned: false });
           } catch(err) {
             console.error(err);
           }
@@ -449,12 +600,12 @@
         const reader = new FileReader();
         reader.onload = (event) => {
           compressImage(event.target.result, 900, 0.7, (compressedSrc) => {
-            applyDocLocal({ src: compressedSrc, left: 40, top: 40, width: 440, pinned: false });
-            if (isFirebaseReady && docRef) docRef.set({ src: compressedSrc, left: 40, top: 40, width: 440, pinned: false });
+            addNewDocToSync({ src: compressedSrc, left: baseLeft, top: baseTop, width: 420, pinned: false });
           });
         };
         reader.readAsDataURL(file);
       }
+      fileInput.value = '';
     });
 
     function compressImage(src, maxDim, quality, cb) {
@@ -474,134 +625,236 @@
       img.src = src;
     }
 
-    function applyDocLocal(data) {
-      if (!data || !data.src || data.src.length < 50) {
-        docWrapper.style.display = 'none';
-        backgroundImg.src = '';
-        return;
-      }
-      backgroundImg.src = data.src;
-      docWrapper.style.display = 'block';
-      docWrapper.style.left = (data.left || 40) + 'px';
-      docWrapper.style.top = (data.top || 40) + 'px';
-      if (data.width) docWrapper.style.width = data.width + 'px';
-      isDocPinned = !!data.pinned;
-
-      if (isDocPinned) {
-        docWrapper.classList.add('pinned');
-        pinBtn.classList.add('is-pinned');
-        pinBtn.textContent = '🔒 ピン留め中';
+    function addNewDocToSync(docData) {
+      if (isFirebaseReady && docsRef) {
+        docsRef.push(docData);
       } else {
-        docWrapper.classList.remove('pinned');
-        pinBtn.classList.remove('is-pinned');
-        pinBtn.textContent = '📌 ピン留め';
+        localDocId++;
+        renderDocItem('local_doc_' + localDocId, docData);
+        updateDocCounter();
       }
     }
 
-    if (isFirebaseReady && docRef) {
-      docRef.on('value', (snapshot) => {
-        applyDocLocal(snapshot.val());
+    function updateDocCounter() {
+      const count = document.querySelectorAll('.doc-item').length;
+      docCounterEl.textContent = `${count} / 4枚`;
+    }
+
+    if (isFirebaseReady && docsRef) {
+      docsRef.on('child_added', (snapshot) => {
+        renderDocItem(snapshot.key, snapshot.val());
+        updateDocCounter();
+      });
+
+      docsRef.on('child_changed', (snapshot) => {
+        const id = snapshot.key;
+        const data = snapshot.val();
+        const el = document.getElementById('doc-' + id);
+        if (!el || !data) return;
+
+        const img = el.querySelector('img');
+        if (data.src && img.src !== data.src) img.src = data.src;
+        el.style.left = (data.left || 40) + 'px';
+        el.style.top = (data.top || 40) + 'px';
+        if (data.width) el.style.width = data.width + 'px';
+
+        const pinBtn = el.querySelector('.pin-btn');
+        if (data.pinned) {
+          el.classList.add('pinned');
+          el.dataset.pinned = 'true';
+          pinBtn.classList.add('is-pinned');
+          pinBtn.textContent = '🔒 固定中';
+        } else {
+          el.classList.remove('pinned');
+          el.dataset.pinned = 'false';
+          pinBtn.classList.remove('is-pinned');
+          pinBtn.textContent = '📌 固定';
+        }
+      });
+
+      docsRef.on('child_removed', (snapshot) => {
+        const el = document.getElementById('doc-' + snapshot.key);
+        if (el) el.remove();
+        updateDocCounter();
       });
     }
 
-    function deleteDoc(e) {
+    function renderDocItem(id, data) {
+      if (!data || !data.src || data.src.length < 50) return;
+      if (document.getElementById('doc-' + id)) return;
+
+      const wrapper = document.createElement('div');
+      wrapper.id = 'doc-' + id;
+      wrapper.className = 'doc-item' + (data.pinned ? ' pinned' : '');
+      wrapper.dataset.pinned = data.pinned ? 'true' : 'false';
+      wrapper.dataset.cropping = 'false';
+      wrapper.style.left = (data.left || 40) + 'px';
+      wrapper.style.top = (data.top || 40) + 'px';
+      wrapper.style.width = (data.width || 420) + 'px';
+
+      wrapper.innerHTML = `
+        <div class="doc-controls">
+          <div class="doc-btn-group">
+            <button class="pin-btn ${data.pinned ? 'is-pinned' : ''}" onclick="toggleDocPin(event, '${id}')">${data.pinned ? '🔒 固定中' : '📌 固定'}</button>
+            <button onclick="zoomDoc(event, '${id}', 1.2)" title="拡大">🔍＋</button>
+            <button onclick="zoomDoc(event, '${id}', 0.8)" title="縮小">🔍－</button>
+            <button class="crop-btn" onclick="toggleDocCrop(event, '${id}')">✂️ 切り抜き</button>
+          </div>
+          <div class="doc-btn-group">
+            <button class="del-doc" onclick="deleteDocItem(event, '${id}')">🗑️ 削除</button>
+          </div>
+        </div>
+        <img src="${data.src}" alt="">
+        <div class="crop-layer">
+          <div class="crop-box"></div>
+        </div>
+      `;
+
+      board.appendChild(wrapper);
+      setupDocCropEvents(wrapper, id);
+
+      makeElementDraggable(wrapper, (l, t) => {
+        if (isFirebaseReady && docsRef && !id.startsWith('local_')) {
+          docsRef.child(id).update({ left: l, top: t, width: wrapper.offsetWidth });
+        }
+      }, () => wrapper.dataset.pinned === 'true' || wrapper.dataset.cropping === 'true');
+
+      if (window.ResizeObserver) {
+        let resizeTimer;
+        const ro = new ResizeObserver(() => {
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(() => {
+            if (isFirebaseReady && docsRef && !id.startsWith('local_')) {
+              docsRef.child(id).update({ width: wrapper.offsetWidth });
+            }
+          }, 250);
+        });
+        ro.observe(wrapper);
+      }
+    }
+
+    function zoomDoc(e, id, factor) {
       e.stopPropagation();
-      if (!confirm('挿入した資料を削除しますか？')) return;
-      applyDocLocal(null);
-      if (isFirebaseReady && docRef) docRef.remove();
-      fileInput.value = '';
+      const el = document.getElementById('doc-' + id);
+      if (!el) return;
+      const currentW = el.offsetWidth;
+      const newW = Math.max(160, Math.min(1800, Math.round(currentW * factor)));
+      el.style.width = newW + 'px';
+      el.style.height = 'auto';
+
+      if (isFirebaseReady && docsRef && !id.startsWith('local_')) {
+        docsRef.child(id).update({ width: newW });
+      }
     }
 
-    function togglePinDoc(e) {
+    function toggleDocPin(e, id) {
       e.stopPropagation();
-      isDocPinned = !isDocPinned;
-      applyDocLocal({ src: backgroundImg.src, left: docWrapper.offsetLeft, top: docWrapper.offsetTop, width: docWrapper.offsetWidth, pinned: isDocPinned });
-      if (isFirebaseReady && docRef) docRef.child('pinned').set(isDocPinned);
+      const el = document.getElementById('doc-' + id);
+      if (!el) return;
+      const nextState = el.dataset.pinned !== 'true';
+      el.dataset.pinned = nextState ? 'true' : 'false';
+      el.classList.toggle('pinned', nextState);
+      const btn = el.querySelector('.pin-btn');
+      btn.classList.toggle('is-pinned', nextState);
+      btn.textContent = nextState ? '🔒 固定中' : '📌 固定';
+
+      if (isFirebaseReady && docsRef && !id.startsWith('local_')) {
+        docsRef.child(id).update({ pinned: nextState });
+      }
     }
 
-    function resetDocPosition() {
-      docWrapper.style.left = '40px';
-      docWrapper.style.top = '40px';
-      docWrapper.style.width = '440px';
-      if (isFirebaseReady && docRef) docRef.update({ left: 40, top: 40, width: 440 });
-    }
-
-    const cropLayer = document.getElementById('crop-layer');
-    const cropBox = document.getElementById('crop-box');
-    const cropToggleBtn = document.getElementById('cropToggleBtn');
-    let isCropping = false;
-    let cropStartX = 0, cropStartY = 0;
-
-    function startCrop(e) {
+    function deleteDocItem(e, id) {
       e.stopPropagation();
-      if (isCropping) { finishCrop(); return; }
-      isCropping = true;
-      cropToggleBtn.textContent = '確定 (適用)';
-      cropToggleBtn.style.background = '#2563eb';
-      cropLayer.style.display = 'block';
+      if (!confirm('この資料を削除しますか？')) return;
+      const el = document.getElementById('doc-' + id);
+      if (el) el.remove();
+      updateDocCounter();
+
+      if (isFirebaseReady && docsRef && !id.startsWith('local_')) {
+        docsRef.child(id).remove();
+      }
     }
 
-    function onCropStart(e) {
-      const pos = getPointerPos(e, cropLayer);
-      cropStartX = pos.x; cropStartY = pos.y;
-      cropBox.style.left = cropStartX + 'px';
-      cropBox.style.top = cropStartY + 'px';
-      cropBox.style.width = '0px'; cropBox.style.height = '0px';
-      cropBox.style.display = 'block';
+    function toggleDocCrop(e, id) {
+      e.stopPropagation();
+      const el = document.getElementById('doc-' + id);
+      if (!el) return;
+      const cropLayer = el.querySelector('.crop-layer');
+      const cropBox = el.querySelector('.crop-box');
+      const cropBtn = el.querySelector('.crop-btn');
+      const img = el.querySelector('img');
 
-      function onCropMove(moveEvent) {
-        const curPos = getPointerPos(moveEvent, cropLayer);
-        cropBox.style.left = Math.min(cropStartX, curPos.x) + 'px';
-        cropBox.style.top = Math.min(cropStartY, curPos.y) + 'px';
-        cropBox.style.width = Math.abs(curPos.x - cropStartX) + 'px';
-        cropBox.style.height = Math.abs(curPos.y - cropStartY) + 'px';
+      if (el.dataset.cropping === 'true') {
+        const boxW = cropBox.offsetWidth;
+        const boxH = cropBox.offsetHeight;
+        if (boxW > 20 && boxH > 20) {
+          const scaleX = img.naturalWidth / img.clientWidth;
+          const scaleY = img.naturalHeight / img.clientHeight;
+          const cropCanvas = document.createElement('canvas');
+          cropCanvas.width = boxW * scaleX;
+          cropCanvas.height = boxH * scaleY;
+          const cCtx = cropCanvas.getContext('2d');
+          cCtx.drawImage(
+            img,
+            cropBox.offsetLeft * scaleX,
+            cropBox.offsetTop * scaleY,
+            boxW * scaleX,
+            boxH * scaleY,
+            0, 0, cropCanvas.width, cropCanvas.height
+          );
+          const newSrc = cropCanvas.toDataURL('image/jpeg', 0.7);
+          img.src = newSrc;
+          if (isFirebaseReady && docsRef && !id.startsWith('local_')) {
+            docsRef.child(id).update({ src: newSrc });
+          }
+        }
+        cropBox.style.display = 'none';
+        cropLayer.style.display = 'none';
+        el.dataset.cropping = 'false';
+        cropBtn.textContent = '✂️ 切り抜き';
+        cropBtn.style.background = 'rgba(30, 41, 59, 0.88)';
+      } else {
+        el.dataset.cropping = 'true';
+        cropBtn.textContent = '確定';
+        cropBtn.style.background = '#2563eb';
+        cropLayer.style.display = 'block';
+      }
+    }
+
+    function setupDocCropEvents(wrapper) {
+      const cropLayer = wrapper.querySelector('.crop-layer');
+      const cropBox = wrapper.querySelector('.crop-box');
+      let startX = 0, startY = 0;
+
+      function onStart(e) {
+        const pos = getPointerPos(e, cropLayer);
+        startX = pos.x; startY = pos.y;
+        cropBox.style.left = startX + 'px';
+        cropBox.style.top = startY + 'px';
+        cropBox.style.width = '0px'; cropBox.style.height = '0px';
+        cropBox.style.display = 'block';
+
+        function onMove(moveEvent) {
+          const curPos = getPointerPos(moveEvent, cropLayer);
+          cropBox.style.left = Math.min(startX, curPos.x) + 'px';
+          cropBox.style.top = Math.min(startY, curPos.y) + 'px';
+          cropBox.style.width = Math.abs(curPos.x - startX) + 'px';
+          cropBox.style.height = Math.abs(curPos.y - startY) + 'px';
+        }
+        function onEnd() {
+          window.removeEventListener('mousemove', onMove);
+          window.removeEventListener('mouseup', onEnd);
+          window.removeEventListener('touchmove', onMove);
+          window.removeEventListener('touchend', onEnd);
+        }
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onEnd);
+        window.addEventListener('touchmove', onMove, { passive: false });
+        window.addEventListener('touchend', onEnd);
       }
 
-      function onCropEnd() {
-        window.removeEventListener('mousemove', onCropMove);
-        window.removeEventListener('mouseup', onCropEnd);
-        window.removeEventListener('touchmove', onCropMove);
-        window.removeEventListener('touchend', onCropEnd);
-      }
-
-      window.addEventListener('mousemove', onCropMove);
-      window.addEventListener('mouseup', onCropEnd);
-      window.addEventListener('touchmove', onCropMove, { passive: false });
-      window.addEventListener('touchend', onCropEnd);
-    }
-    cropLayer.addEventListener('mousedown', onCropStart);
-    cropLayer.addEventListener('touchstart', onCropStart, { passive: false });
-
-    function finishCrop() {
-      const boxW = cropBox.offsetWidth;
-      const boxH = cropBox.offsetHeight;
-      if (boxW > 20 && boxH > 20) {
-        const scaleX = backgroundImg.naturalWidth / backgroundImg.clientWidth;
-        const scaleY = backgroundImg.naturalHeight / backgroundImg.clientHeight;
-
-        const cropCanvas = document.createElement('canvas');
-        cropCanvas.width = boxW * scaleX;
-        cropCanvas.height = boxH * scaleY;
-        const cCtx = cropCanvas.getContext('2d');
-
-        cCtx.drawImage(
-          backgroundImg,
-          cropBox.offsetLeft * scaleX,
-          cropBox.offsetTop * scaleY,
-          boxW * scaleX,
-          boxH * scaleY,
-          0, 0, cropCanvas.width, cropCanvas.height
-        );
-        const newSrc = cropCanvas.toDataURL('image/jpeg', 0.7);
-        backgroundImg.src = newSrc;
-        if (isFirebaseReady && docRef) docRef.child('src').set(newSrc);
-      }
-
-      cropBox.style.display = 'none';
-      cropLayer.style.display = 'none';
-      isCropping = false;
-      cropToggleBtn.textContent = '✂️ 切り抜き';
-      cropToggleBtn.style.background = 'rgba(30, 41, 59, 0.85)';
+      cropLayer.addEventListener('mousedown', onStart);
+      cropLayer.addEventListener('touchstart', onStart, { passive: false });
     }
 
     function makeElementDraggable(el, onEndSync = null, isLockedFn = () => false) {
@@ -615,7 +868,7 @@
 
         const pos = getPointerPos(e);
         const rect = el.getBoundingClientRect();
-        if (pos.clientX > rect.right - 26 && pos.clientY > rect.bottom - 26) return;
+        if (pos.clientX > rect.right - 24 && pos.clientY > rect.bottom - 24) return;
 
         isDragging = true;
         startX = pos.clientX;
@@ -631,8 +884,8 @@
         if (!isDragging) return;
         if (e.cancelable) e.preventDefault();
         const pos = getPointerPos(e);
-        el.style.left = `${initialLeft + (pos.clientX - startX)}px`;
-        el.style.top = `${initialTop + (pos.clientY - startY)}px`;
+        el.style.left = `${Math.max(0, initialLeft + (pos.clientX - startX))}px`;
+        el.style.top = `${Math.max(0, initialTop + (pos.clientY - startY))}px`;
       }
 
       function onEnd() {
@@ -650,20 +903,24 @@
       window.addEventListener('touchend', onEnd);
     }
 
-    makeElementDraggable(docWrapper, (l, t) => {
-      if (isFirebaseReady && docRef) docRef.update({ left: l, top: t, width: docWrapper.offsetWidth });
-    }, () => isDocPinned || isCropping);
-
-    // --- 2. 付箋処理 ---
+    // --- 2. 付箋処理（自動名前付与） ---
     function handleAddNoteClick() {
+      if (!currentUserName) {
+        openNameModal();
+        return;
+      }
       const color = document.getElementById('noteColor').value || 'yellow';
+      const leftPos = viewport.scrollLeft + 300 + Math.floor(Math.random() * 60);
+      const topPos = viewport.scrollTop + 80 + Math.floor(Math.random() * 60);
+
       const data = {
         color: color,
+        author: currentUserName, // 作成者の名前を自動セット
         text: '',
-        left: 500 + Math.floor(Math.random() * 40),
-        top: 60 + Math.floor(Math.random() * 40),
-        width: 180,
-        height: 100
+        left: leftPos,
+        top: topPos,
+        width: 190,
+        height: 110
       };
 
       if (isFirebaseReady && notesRef) {
@@ -691,6 +948,10 @@
         if (document.activeElement !== textarea && textarea.value !== val.text) {
           textarea.value = val.text || '';
         }
+        const authorSpan = noteEl.querySelector('.note-author');
+        if (authorSpan && val.author) {
+          authorSpan.textContent = `👤 ${val.author}`;
+        }
         const safeColor = val.color || 'yellow';
         noteEl.className = `sticky-note color-${safeColor}`;
         noteEl.style.left = val.left + 'px';
@@ -707,22 +968,32 @@
       });
     }
 
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, (m) => ({
+        '&': '&', '<': '<', '>': '>', '"': '"', "'": '''
+      }[m]));
+    }
+
     function renderNote(id, data) {
       if (document.getElementById('note-' + id)) return;
 
       const safeColor = (data && data.color) ? data.color : 'yellow';
+      const authorName = (data && data.author) ? escapeHtml(data.author) : 'ゲスト';
 
       const note = document.createElement('div');
       note.id = 'note-' + id;
       note.className = `sticky-note color-${safeColor}`;
-      note.style.left = ((data && data.left) ? data.left : 500) + 'px';
-      note.style.top = ((data && data.top) ? data.top : 60) + 'px';
+      note.style.left = ((data && data.left) ? data.left : 300) + 'px';
+      note.style.top = ((data && data.top) ? data.top : 80) + 'px';
       if (data && data.width) note.style.width = data.width + 'px';
       if (data && data.height) note.style.height = data.height + 'px';
 
       note.innerHTML = `
-        <button class="del-btn" onclick="deleteNote('${id}')">✕</button>
-        <textarea maxlength="100" placeholder="100字以内でコメントを入力...">${(data && data.text) ? data.text : ''}</textarea>
+        <div class="note-header">
+          <span class="note-author">👤 ${authorName}</span>
+          <button class="del-btn" onclick="deleteNote('${id}')">✕</button>
+        </div>
+        <textarea maxlength="100" placeholder="100字以内でコメントを入力...">${(data && data.text) ? escapeHtml(data.text) : ''}</textarea>
       `;
 
       board.appendChild(note);
@@ -763,13 +1034,12 @@
       }
     }
 
-    // ✕ボタン押下で即時画面から消し、DBからも削除
     function deleteNote(id) {
       const noteEl = document.getElementById('note-' + id);
       if (noteEl) noteEl.remove();
 
       if (isFirebaseReady && notesRef && !id.startsWith('local_')) {
-        notesRef.child(id).remove().catch((e) => console.error("削除エラー:", e));
+        notesRef.child(id).remove().catch((e) => console.error(e));
       }
       runTextMining();
     }
@@ -815,7 +1085,7 @@
 
         if (currentMode === 'eraser') {
           ctx.globalCompositeOperation = 'destination-out';
-          ctx.lineWidth = 26;
+          ctx.lineWidth = 28;
         } else {
           ctx.globalCompositeOperation = 'source-over';
           ctx.strokeStyle = document.getElementById('penColor').value;
@@ -825,9 +1095,8 @@
         ctx.lineJoin = 'round';
       } else if (currentMode === 'selectClear') {
         isDrawing = true;
-        const screenPos = getPointerPos(e);
-        selStartX = screenPos.clientX;
-        selStartY = screenPos.clientY;
+        selStartX = pos.x;
+        selStartY = pos.y;
         selectionBox.style.left = selStartX + 'px';
         selectionBox.style.top = selStartY + 'px';
         selectionBox.style.width = '0px';
@@ -847,11 +1116,10 @@
         ctx.stroke();
         currentStrokePoints.push({ x: Math.round(pos.x), y: Math.round(pos.y) });
       } else if (currentMode === 'selectClear') {
-        const screenPos = getPointerPos(e);
-        selectionBox.style.left = Math.min(selStartX, screenPos.clientX) + 'px';
-        selectionBox.style.top = Math.min(selStartY, screenPos.clientY) + 'px';
-        selectionBox.style.width = Math.abs(screenPos.clientX - selStartX) + 'px';
-        selectionBox.style.height = Math.abs(screenPos.clientY - selStartY) + 'px';
+        selectionBox.style.left = Math.min(selStartX, pos.x) + 'px';
+        selectionBox.style.top = Math.min(selStartY, pos.y) + 'px';
+        selectionBox.style.width = Math.abs(pos.x - selStartX) + 'px';
+        selectionBox.style.height = Math.abs(pos.y - selStartY) + 'px';
       }
     }
 
@@ -864,7 +1132,7 @@
           const strokeData = {
             type: currentMode,
             color: document.getElementById('penColor').value,
-            width: currentMode === 'eraser' ? 26 : parseInt(document.getElementById('penWidth').value, 10),
+            width: currentMode === 'eraser' ? 28 : parseInt(document.getElementById('penWidth').value, 10),
             points: currentStrokePoints
           };
           localStrokes.push(strokeData);
@@ -873,12 +1141,11 @@
           }
         }
       } else if (currentMode === 'selectClear') {
-        const screenPos = getPointerPos(e);
-        const rect = board.getBoundingClientRect();
-        const selLeft = Math.min(selStartX, screenPos.clientX) - rect.left;
-        const selTop = Math.min(selStartY, screenPos.clientY) - rect.top;
-        const selW = Math.abs(screenPos.clientX - selStartX);
-        const selH = Math.abs(screenPos.clientY - selStartY);
+        const pos = getPointerPos(e, canvas);
+        const selLeft = Math.min(selStartX, pos.x);
+        const selTop = Math.min(selStartY, pos.y);
+        const selW = Math.abs(pos.x - selStartX);
+        const selH = Math.abs(pos.y - selStartY);
 
         if (selW > 5 && selH > 5) {
           ctx.clearRect(selLeft, selTop, selW, selH);
@@ -928,7 +1195,7 @@
           ctx.lineJoin = 'round';
           if (stroke.type === 'eraser') {
             ctx.globalCompositeOperation = 'destination-out';
-            ctx.lineWidth = stroke.width || 26;
+            ctx.lineWidth = stroke.width || 28;
           } else {
             ctx.globalCompositeOperation = 'source-over';
             ctx.strokeStyle = stroke.color || '#e53e3e';
